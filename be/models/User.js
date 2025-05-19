@@ -80,6 +80,52 @@ const UserSchema = new mongoose.Schema(
     lastLogin: Date
   },
   {
+  addresses: [
+    {
+      _id: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: () => new mongoose.Types.ObjectId()
+      },
+      fullName: {
+        type: String,
+        required: true
+      },
+      phone: {
+        type: String,
+        required: true
+      },
+      address: {
+        type: String,
+        required: true
+      },
+      city: {
+        type: String,
+        required: true
+      },
+      state: {
+        type: String
+      },
+      postalCode: {
+        type: String
+      },
+      country: {
+        type: String,
+        default: 'Vietnam'
+      },
+      isDefault: {
+        type: Boolean,
+        default: false
+      }
+    }
+  ],
+  
+  // Tham chiếu đến địa chỉ mặc định
+  defaultAddress: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'addresses'
+  }
+},
+  {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -116,7 +162,7 @@ UserSchema.methods.getSignedJwtToken = function() {
     { id: this._id, role: this.role },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRE
+      expiresIn: process.env.JWT_EXPIRES_IN
     }
   );
 };

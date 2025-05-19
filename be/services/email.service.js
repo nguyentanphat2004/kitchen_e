@@ -1,3 +1,0 @@
-// Gửi email
-
-module.exports = {};

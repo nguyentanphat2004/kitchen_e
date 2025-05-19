@@ -1,5 +1,6 @@
 // app.js - thêm đoạn code sau vào file app.js của bạn
 const express = require('express');
+require('dotenv').config();
 const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -13,6 +14,7 @@ const passport = require('./config/passport');
 const errorHandler = require('./middlewares/error.middleware');
 const { requestLogger, errorLogger } = require('./middlewares/logger.middleware');
 const { defaultLimiter, authLimiter } = require('./middlewares/limiter.middleware');
+const { attachSocketService } = require('./middlewares/socket.middleware');
 const path = require('path');
 
 // Khởi tạo app
@@ -79,9 +81,19 @@ app.use('/api/auth/', authLimiter);
 // Routes
 app.use('/api/auth', require('./routes/api/auth.routes'));
 app.use('/api/products', require('./routes/api/products.routes'));
-// Thêm các route khác tại đây
-
-// Serve static assets in production
+app.use('/api/bundles', require('./routes/api/bundles.routes'));
+app.use('/api/categories', require('./routes/api/categories.routes')); // Thêm route categories
+app.use('/api/recipes', require('./routes/api/recipes.routes'));
+app.use('/api/cart', require('./routes/api/carts.routes')); // Thêm route cart
+app.use('/api/orders', require('./routes/api/orders.routes')); // Thêm route orders
+app.use('/api/payments', require('./routes/api/payments.routes')); // Thêm route payments
+app.use('/api/wishlist', require('./routes/api/wishlist.routes'));
+app.use('/api/users', require('./routes/api/users.routes'));
+app.use('/api/flash-sales', require('./routes/api/flash-sales.routes'));
+app.use('/api/reviews', require('./routes/api/reviews.routes'));
+app.use('/api/vouchers', require('./routes/api/vouchers.routes'));
+app.use('/api/notifications', require('./routes/api/notifications.routes'));
+app.use('/api/socket', require('./routes/api/socket.routes')); // Thêm route wishlist
 if (process.env.NODE_ENV === 'production') {
   // Set static folder
   app.use(express.static('client/build'));

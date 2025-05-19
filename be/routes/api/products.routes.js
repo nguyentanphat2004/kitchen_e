@@ -6,7 +6,7 @@ const productVariantController = require('../../controllers/product-variant.cont
 const productCustomizationController = require('../../controllers/product-customization.controller');
 const reviewController = require('../../controllers/review.controller');
 const { protect, authorize, optionalAuth } = require('../../middlewares/auth.middleware');
-const upload = require('../../middlewares/upload.middleware');
+const { upload } = require('../../middlewares/upload.middleware');
 
 // Public product routes
 router.get('/search', productController.searchProducts);

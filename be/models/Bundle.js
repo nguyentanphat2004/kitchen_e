@@ -1,6 +1,7 @@
 // models/Bundle.js
 const mongoose = require('mongoose');
 const slugify = require('slugify');
+const mongoosePaginate = require('mongoose-paginate-v2');
 
 const BundleSchema = new mongoose.Schema(
   {
@@ -24,6 +25,10 @@ const BundleSchema = new mongoose.Schema(
     },
     image: {
       type: String
+    },
+    imagePath: {
+      type: String,
+      description: 'Storage path or S3 key for the image'
     },
     discountType: {
       type: String,
@@ -229,5 +234,5 @@ BundleSchema.index({
   description: 'text',
   tags: 'text'
 });
-
+BundleSchema.plugin(mongoosePaginate);
 module.exports = mongoose.model('Bundle', BundleSchema);

@@ -1,11 +1,24 @@
 // middlewares/limiter.middleware.js
 const rateLimit = require('express-rate-limit');
-const RedisStore = process.env.REDIS_URL ? require('rate-limit-redis') : null;
-const Redis = process.env.REDIS_URL ? require('ioredis') : null;
-
+let RedisStore;
+let Redis;
 let redisClient;
+
 if (process.env.REDIS_URL) {
-  redisClient = new Redis(process.env.REDIS_URL);
+  try {
+    // Dùng ioredis
+    Redis = require('ioredis');
+    redisClient = new Redis(process.env.REDIS_URL);
+    // Thử import cho version 3.x (function export)
+    try {
+      RedisStore = require('rate-limit-redis');
+    } catch (e) {
+      // Nếu không được, thử import kiểu named export (v2.x)
+      RedisStore = require('rate-limit-redis').RateLimitRedisStore;
+    }
+  } catch (err) {
+    console.error('Không thể khởi tạo Redis:', err);
+  }
 }
 
 /**
@@ -35,10 +48,20 @@ const createLimiter = ({
   };
 
   // Sử dụng Redis store nếu đã cấu hình
-  if (redisClient) {
-    config.store = new RedisStore({
-      sendCommand: (...args) => redisClient.call(...args)
-    });
+  if (redisClient && RedisStore) {
+    // Tùy phiên bản, RedisStore có thể là function hoặc class
+    try {
+      config.store = typeof RedisStore === 'function'
+        ? RedisStore({ sendCommand: (...args) => redisClient.call(...args) })
+        : new RedisStore({ sendCommand: (...args) => redisClient.call(...args) });
+    } catch (e) {
+      // Nếu lỗi, thử cách còn lại
+      try {
+        config.store = new RedisStore({ sendCommand: (...args) => redisClient.call(...args) });
+      } catch (e2) {
+        config.store = RedisStore({ sendCommand: (...args) => redisClient.call(...args) });
+      }
+    }
   }
 
   return rateLimit(config);

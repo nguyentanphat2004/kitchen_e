@@ -1,76 +1,70 @@
-// models/OrderItem.js
+// models/Category.js
 const mongoose = require('mongoose');
+const slugify = require('slugify');
+const mongoosePaginate = require('mongoose-paginate-v2');
 
-const OrderItemSchema = new mongoose.Schema(
+const CategorySchema = new mongoose.Schema(
   {
-    orderId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Order',
-      required: [true, 'Order ID is required']
-    },
-    productId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
-      required: [true, 'Product ID is required']
-    },
-    variantId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'ProductVariant',
-      default: null
-    },
-    quantity: {
-      type: Number,
-      required: [true, 'Quantity is required'],
-      min: [1, 'Quantity must be at least 1']
-    },
-    price: {
-      type: Number,
-      required: [true, 'Price is required'],
-      min: [0, 'Price cannot be negative']
-    },
-    discount: {
-      type: Number,
-      default: 0,
-      min: [0, 'Discount cannot be negative']
-    },
-    flashSaleItemId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'FlashSaleItem',
-      default: null
-    },
-    customizations: {
-      type: Object,
-      default: {},
-      description: 'Customization options selected by the user'
-    },
-    productSnapshot: {
-      name: String,
-      sku: String,
-      image: String,
-      description: String
-    },
-    variantSnapshot: {
-      name: String,
-      sku: String,
-      color: String,
-      size: String,
-      material: String
-    },
-    refundStatus: {
+    name: {
       type: String,
-      enum: ['none', 'requested', 'approved', 'rejected', 'completed'],
-      default: 'none'
+      required: [true, 'Category name is required'],
+      trim: true,
+      maxlength: [50, 'Category name cannot exceed 50 characters']
     },
-    refundReason: {
+    slug: {
+      type: String,
+      unique: true,
+      lowercase: true,
+      index: true
+    },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: [500, 'Description cannot exceed 500 characters']
+    },
+    parentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      default: null
+    },
+    image: {
       type: String
     },
-    refundAmount: {
+    imagePath: {
+      type: String,
+      description: 'Storage path or S3 key for the image'
+    },
+    icon: {
+      type: String,
+      description: 'Icon class or URL'
+    },
+    displayOrder: {
       type: Number,
       default: 0
     },
-    notes: {
-      type: String
-    }
+    featured: {
+      type: Boolean,
+      default: false
+    },
+    showInMenu: {
+      type: Boolean,
+      default: true
+    },
+    showInHome: {
+      type: Boolean,
+      default: false
+    },
+    isActive: {
+      type: Boolean,
+      default: true
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false
+    },
+    metaTitle: String,
+    metaDescription: String,
+    metaKeywords: String
   },
   {
     timestamps: true,
@@ -79,127 +73,96 @@ const OrderItemSchema = new mongoose.Schema(
   }
 );
 
-// Virtual for calculating total item price
-OrderItemSchema.virtual('totalPrice').get(function() {
-  return (this.price * this.quantity) - this.discount;
+// Virtual for subcategories
+CategorySchema.virtual('subcategories', {
+  ref: 'Category',
+  localField: '_id',
+  foreignField: 'parentId'
 });
 
-// Set product snapshot before saving
-OrderItemSchema.pre('save', async function(next) {
-  try {
-    if (this.isNew) {
-      // Get product details
-      const Product = mongoose.model('Product');
-      const product = await Product.findById(this.productId);
-      
-      if (product) {
-        this.productSnapshot = {
-          name: product.name,
-          sku: product.sku,
-          image: product.images && product.images.length > 0 ? product.images[0].url : null,
-          description: product.description
-        };
-      }
-      
-      // Get variant details if specified
-      if (this.variantId) {
-        const ProductVariant = mongoose.model('ProductVariant');
-        const variant = await ProductVariant.findById(this.variantId);
-        
-        if (variant) {
-          this.variantSnapshot = {
-            name: variant.name,
-            sku: variant.sku,
-            color: variant.color,
-            size: variant.size,
-            material: variant.material
-          };
-        }
-      }
-    }
-    
-    next();
-  } catch (error) {
-    next(error);
-  }
+// Virtual for products count
+CategorySchema.virtual('productsCount', {
+  ref: 'Product',
+  localField: '_id',
+  foreignField: 'categoryId',
+  count: true
 });
 
-// Update order totals after save
-OrderItemSchema.post('save', async function() {
-  try {
-    const Order = mongoose.model('Order');
-    const order = await Order.findById(this.orderId);
-    if (order) {
-      await order.calculateTotals();
-    }
-  } catch (error) {
-    console.error('Failed to update order totals:', error);
+// Create slug from name
+CategorySchema.pre('save', function(next) {
+  if (this.isModified('name')) {
+    this.slug = slugify(this.name, {
+      lower: true,
+      strict: true,
+      remove: /[*+~.()'"!:@]/g
+    });
   }
+  next();
 });
 
-// Update order totals after update
-OrderItemSchema.post('findOneAndUpdate', async function(doc) {
-  try {
-    if (doc) {
-      const Order = mongoose.model('Order');
-      const order = await Order.findById(doc.orderId);
-      if (order) {
-        await order.calculateTotals();
-      }
-    }
-  } catch (error) {
-    console.error('Failed to update order totals after update:', error);
+// Middleware for soft delete
+CategorySchema.pre(/^find/, function(next) {
+  if (!this.getOptions().includeDeleted) {
+    this.find({ isDeleted: { $ne: true } });
   }
+  next();
 });
 
-// Update order totals after delete
-OrderItemSchema.post('remove', async function() {
-  try {
-    const Order = mongoose.model('Order');
-    const order = await Order.findById(this.orderId);
-    if (order) {
-      await order.calculateTotals();
-    }
-  } catch (error) {
-    console.error('Failed to update order totals after delete:', error);
-  }
-});
-
-// Method to request refund
-OrderItemSchema.methods.requestRefund = async function(reason, amount) {
-  if (this.refundStatus !== 'none') {
-    throw new Error(`Refund already ${this.refundStatus}`);
-  }
+// Static method to get hierarchy
+CategorySchema.statics.getHierarchy = async function() {
+  // Get all non-deleted categories
+  const categories = await this.find({ isDeleted: false })
+    .sort('displayOrder name')
+    .lean();
   
-  // Set refund details
-  this.refundStatus = 'requested';
-  this.refundReason = reason;
-  this.refundAmount = amount || this.price * this.quantity;
+  // Create a map for quick lookup
+  const categoryMap = {};
+  categories.forEach(category => {
+    category.children = [];
+    categoryMap[category._id.toString()] = category;
+  });
   
-  return this.save();
+  // Build the hierarchy
+  const rootCategories = [];
+  
+  categories.forEach(category => {
+    if (category.parentId) {
+      const parentId = category.parentId.toString();
+      if (categoryMap[parentId]) {
+        categoryMap[parentId].children.push(category);
+      } else {
+        rootCategories.push(category);
+      }
+    } else {
+      rootCategories.push(category);
+    }
+  });
+  
+  return rootCategories;
 };
 
-// Method to process refund
-OrderItemSchema.methods.processRefund = async function(status, amount) {
-  if (this.refundStatus !== 'requested') {
-    throw new Error('No refund request to process');
-  }
-  
-  if (status === 'approved' || status === 'completed') {
-    this.refundStatus = status;
-    this.refundAmount = amount || this.refundAmount;
-  } else if (status === 'rejected') {
-    this.refundStatus = 'rejected';
-  } else {
-    throw new Error('Invalid refund status');
-  }
-  
-  return this.save();
+// Static method to get featured categories
+CategorySchema.statics.getFeaturedCategories = async function(limit = 5) {
+  return this.find({
+    featured: true,
+    isActive: true,
+    isDeleted: false
+  })
+    .sort('displayOrder')
+    .limit(limit);
 };
 
 // Indexes for faster lookups
-OrderItemSchema.index({ orderId: 1 });
-OrderItemSchema.index({ productId: 1 });
-OrderItemSchema.index({ refundStatus: 1 });
+CategorySchema.index({ slug: 1 });
+CategorySchema.index({ parentId: 1 });
+CategorySchema.index({ isActive: 1, isDeleted: 1 });
+CategorySchema.index({ featured: 1 });
+CategorySchema.index({ 
+  name: 'text', 
+  description: 'text'
+});
 
-module.exports = mongoose.model('OrderItem', OrderItemSchema);
+// Add pagination plugin
+CategorySchema.plugin(mongoosePaginate);
+
+module.exports = mongoose.model('Category', CategorySchema);

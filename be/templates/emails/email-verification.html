@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Xác thực tài khoản</title>
+  <style>
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #4CAF50;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Chào {{name}},</h2>
+    <p>Cảm ơn bạn đã đăng ký tài khoản tại {{appName}}.</p>
+    <p>Vui lòng nhấn vào nút bên dưới để xác thực email của bạn:</p>
+    <p style="text-align:center;">
+      <a href="{{verifyUrl}}" class="btn">Xác thực email</a>
+    </p>
+    <p>Nếu nút không hoạt động, hãy sao chép và dán liên kết sau vào trình duyệt:</p>
+    <p><a href="{{verifyUrl}}">{{verifyUrl}}</a></p>
+    <p>Trân trọng,<br>{{appName}} Team</p>
+  </div>
+</body>
+</html> 

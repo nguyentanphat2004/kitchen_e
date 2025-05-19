@@ -251,7 +251,6 @@ NotificationSchema.statics.updateDeliveryStatus = async function(notificationId,
   );
 };
 
-// Indexes for faster lookups
 NotificationSchema.index({ userId: 1, isRead: 1, isDismissed: 1 });
 NotificationSchema.index({ createdAt: -1 });
 NotificationSchema.index({ expiresAt: 1 });

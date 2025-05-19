@@ -47,6 +47,8 @@ exports.register = asyncHandler(async (req, res, next) => {
 
   // Gửi email xác thực
   try {
+    console.log('🚀 Bắt đầu gửi email xác thực');
+  
     await sendEmail({
       to: user.email,
       subject: 'Xác thực tài khoản',
@@ -56,11 +58,14 @@ exports.register = asyncHandler(async (req, res, next) => {
         verifyUrl
       }
     });
-
-    // Gửi token JWT
-    sendTokenResponse(user, 201, res);
+  
+    console.log('✅ Gửi email xong, chuẩn bị gửi JWT');
+  
+    sendTokenResponse(user, 201, res); // Có thể lỗi tại đây
+  
+    console.log('✅ Gửi token xong'); // Nếu không thấy log này → lỗi nằm trong sendTokenResponse
   } catch (error) {
-    // Nếu có lỗi khi gửi email, xóa token và báo lỗi
+    
     user.emailVerificationToken = undefined;
     user.emailVerificationExpire = undefined;
     await user.save({ validateBeforeSave: false });

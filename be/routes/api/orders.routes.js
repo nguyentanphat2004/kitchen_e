@@ -1,11 +1,20 @@
+// routes/api/order.routes.js
 const express = require('express');
 const router = express.Router();
+const orderController = require('../../controllers/order.controller');
+const { protect, authorize } = require('../../middlewares/auth.middleware');
 
-// @route   /api/orders
-// @desc    Routes for Order
+// Customer order routes
+router.post('/', protect, orderController.createOrder);
+router.get('/', protect, orderController.getUserOrders);
+router.get('/:id', protect, orderController.getOrderById);
+router.put('/:id/cancel', protect, orderController.cancelOrder);
+router.get('/:id/tracking', protect, orderController.getOrderTracking);
+router.post('/:orderId/items/:itemId/refund', protect, orderController.requestItemRefund);
 
-router.get('/', (req, res) => {
-  res.send('GET Order');
-});
+// Admin/Staff order routes
+router.put('/:id/status', protect, authorize('admin', 'staff'), orderController.updateOrderStatus);
+router.put('/:orderId/items/:itemId/refund', protect, authorize('admin', 'staff'), orderController.processRefundRequest);
+router.get('/stats', protect, authorize('admin', 'staff'), orderController.getOrderStats);
 
 module.exports = router;

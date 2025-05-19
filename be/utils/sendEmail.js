@@ -41,5 +41,4 @@ const sendEmail = async (options) => {
   // Gửi email
   await transporter.sendMail(message);
 };
-
 module.exports = sendEmail;
