@@ -33,7 +33,14 @@ const ProductVariantSchema = new mongoose.Schema(
     },
     images: [
       {
-        url: String,
+        url: {
+          type: String,
+          required: true
+        },
+        path: {
+          type: String,
+          description: 'Storage path or S3 key'
+        },
         altText: String
       }
     ],

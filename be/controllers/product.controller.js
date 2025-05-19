@@ -4,7 +4,8 @@ const ProductVariant = require('../models/ProductVariant');
 const Category = require('../models/Category');
 const Review = require('../models/Review');
 const FlashSaleItem = require('../models/FlashSaleItem');
-const { uploadImage, deleteImage } = require('../services/image.service');
+const imageService = require('../utils/imageService');
+const { getFileUrl } = require('../middlewares/upload.middleware');
 const ApiError = require('../utils/apiError');
 const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../middlewares/async.middleware');
@@ -306,9 +307,11 @@ exports.createProduct = asyncHandler(async (req, res) => {
     
     for (const file of req.files) {
       try {
-        const result = await uploadImage(file, 'products');
+        // Sử dụng imageService mới để hỗ trợ cả local và S3
+        const result = await imageService.uploadImage(file, 'products');
         images.push({
-          url: result.url,
+          url: result.url, // URL đã được tạo tương ứng với loại storage (S3 hoặc local)
+          path: result.path, // Đường dẫn lưu trữ (key trong S3 hoặc đường dẫn local)
           altText: name,
           isDefault: images.length === 0 // First image is default
         });
@@ -411,13 +414,16 @@ exports.updateProduct = asyncHandler(async (req, res) => {
       ? removeImages 
       : [removeImages];
     
-    // Delete images from storage
-    for (const imageUrl of imagesToRemove) {
-      try {
-        await deleteImage(imageUrl);
-      } catch (error) {
-        console.error(`Failed to delete image ${imageUrl}: ${error.message}`);
-        // Continue with other images even if one fails
+    // Delete images from storage (works with both S3 and local)
+    for (const image of product.images) {
+      if (imagesToRemove.includes(image.url)) {
+        try {
+          // Sử dụng imageService mới để xóa hình ảnh
+          await imageService.deleteImage(image.path || image.url);
+        } catch (error) {
+          console.error(`Failed to delete image ${image.url}: ${error.message}`);
+          // Continue with other images even if one fails
+        }
       }
     }
     
@@ -433,9 +439,11 @@ exports.updateProduct = asyncHandler(async (req, res) => {
     
     for (const file of req.files) {
       try {
-        const result = await uploadImage(file, 'products');
+        // Sử dụng imageService mới để hỗ trợ cả local và S3
+        const result = await imageService.uploadImage(file, 'products');
         newImages.push({
           url: result.url,
+          path: result.path,
           altText: name || product.name,
           isDefault: !product.images || product.images.length === 0
         });

@@ -1,7 +1,8 @@
 // controllers/product-variant.controller.js
 const Product = require('../models/Product');
 const ProductVariant = require('../models/ProductVariant');
-const { uploadImage, deleteImage } = require('../services/image.service');
+const imageService = require('../utils/imageService');
+const { getFileUrl } = require('../middlewares/upload.middleware');
 const ApiError = require('../utils/apiError');
 const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../middlewares/async.middleware');
@@ -118,9 +119,10 @@ exports.createProductVariant = asyncHandler(async (req, res) => {
     
     for (const file of req.files) {
       try {
-        const result = await uploadImage(file, 'variants');
+        const result = await imageService.uploadImage(file, 'variants');
         images.push({
           url: result.url,
+          path: result.path,
           altText: `${product.name} - ${name}`
         });
       } catch (error) {
@@ -209,13 +211,14 @@ exports.updateProductVariant = asyncHandler(async (req, res) => {
       ? removeImages 
       : [removeImages];
     
-    // Delete images from storage
-    for (const imageUrl of imagesToRemove) {
-      try {
-        await deleteImage(imageUrl);
-      } catch (error) {
-        console.error(`Failed to delete image ${imageUrl}: ${error.message}`);
-        // Continue with other images even if one fails
+    // Delete images from storage (S3 or local)
+    for (const image of variant.images) {
+      if (imagesToRemove.includes(image.url)) {
+        try {
+          await imageService.deleteImage(image.path || image.url);
+        } catch (error) {
+          console.error(`Failed to delete image ${image.url}: ${error.message}`);
+        }
       }
     }
     
@@ -232,9 +235,10 @@ exports.updateProductVariant = asyncHandler(async (req, res) => {
     
     for (const file of req.files) {
       try {
-        const result = await uploadImage(file, 'variants');
+        const result = await imageService.uploadImage(file, 'variants');
         newImages.push({
           url: result.url,
+          path: result.path,
           altText: `${product.name} - ${name || variant.name}`
         });
       } catch (error) {

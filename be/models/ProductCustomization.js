@@ -40,6 +40,10 @@ const ProductCustomizationSchema = new mongoose.Schema(
         image: {
           type: String
         },
+        imagePath: {
+          type: String,
+          description: 'Storage path or S3 key'
+        },
         isDefault: {
           type: Boolean,
           default: false

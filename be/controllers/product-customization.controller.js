@@ -1,7 +1,8 @@
 // controllers/product-customization.controller.js
 const Product = require('../models/Product');
 const ProductCustomization = require('../models/ProductCustomization');
-const { uploadImage, deleteImage } = require('../services/image.service');
+const imageService = require('../utils/imageService');
+const { getFileUrl } = require('../middlewares/upload.middleware');
 const ApiError = require('../utils/apiError');
 const ApiResponse = require('../utils/apiResponse');
 const asyncHandler = require('../middlewares/async.middleware');
@@ -21,8 +22,8 @@ exports.getProductCustomizations = asyncHandler(async (req, res) => {
   }
 
   // Get all customizations for this product
-  const customizations = await ProductCustomization.find({ 
-    productId, 
+  const customizations = await ProductCustomization.find({
+    productId,
     isDeleted: false,
     isActive: true
   }).sort('displayOrder name');
@@ -39,10 +40,10 @@ exports.getProductCustomization = asyncHandler(async (req, res) => {
   const { productId, id } = req.params;
 
   // Find the customization
-  const customization = await ProductCustomization.findOne({ 
-    _id: id, 
+  const customization = await ProductCustomization.findOne({
+    _id: id,
     productId,
-    isDeleted: false 
+    isDeleted: false
   });
 
   if (!customization) {
@@ -108,7 +109,7 @@ exports.createProductCustomization = asyncHandler(async (req, res) => {
     if (!option.name || !option.value) {
       throw new ApiError('Each option must have name and value', 400);
     }
-    
+
     return {
       name: option.name,
       value: option.value,
@@ -133,36 +134,40 @@ exports.createProductCustomization = asyncHandler(async (req, res) => {
   // Handle option images if provided
   if (req.files && req.files.length > 0) {
     const optionImages = {};
-    
+
     // If option indices are provided in the request
-    const optionIndices = req.body.optionIndices 
-      ? (Array.isArray(req.body.optionIndices) 
-          ? req.body.optionIndices 
-          : [req.body.optionIndices])
+    const optionIndices = req.body.optionIndices
+      ? (Array.isArray(req.body.optionIndices)
+        ? req.body.optionIndices
+        : [req.body.optionIndices])
       : [];
 
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
       let optionIndex = i;
-      
+
       // If specific option index is provided for this file
       if (optionIndices[i]) {
         optionIndex = parseInt(optionIndices[i]);
       }
-      
+
       // Upload the image
       try {
-        const result = await uploadImage(file, 'customizations');
-        optionImages[optionIndex] = result.url;
+        const result = await imageService.uploadImage(file, 'customizations');
+        optionImages[optionIndex] = {
+          url: result.url,
+          path: result.path
+        };
       } catch (error) {
         throw new ApiError(`Image upload failed: ${error.message}`, 500);
       }
     }
-    
+
     // Update options with images
     customizationData.options = customizationData.options.map((option, index) => {
       if (optionImages[index]) {
-        option.image = optionImages[index];
+        option.image = optionImages[index].url;
+        option.imagePath = optionImages[index].path;
       }
       return option;
     });
@@ -200,10 +205,10 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
   } = req.body;
 
   // Find the customization
-  const customization = await ProductCustomization.findOne({ 
-    _id: id, 
+  const customization = await ProductCustomization.findOne({
+    _id: id,
     productId,
-    isDeleted: false 
+    isDeleted: false
   });
 
   if (!customization) {
@@ -215,14 +220,14 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
     ...(name && { name }),
     ...(customizationType && { customizationType }),
     ...(description !== undefined && { description }),
-    ...(isRequired !== undefined && { 
-      isRequired: isRequired === 'true' || isRequired === true 
+    ...(isRequired !== undefined && {
+      isRequired: isRequired === 'true' || isRequired === true
     }),
-    ...(displayOrder !== undefined && { 
-      displayOrder: Number(displayOrder) 
+    ...(displayOrder !== undefined && {
+      displayOrder: Number(displayOrder)
     }),
-    ...(isActive !== undefined && { 
-      isActive: isActive === 'true' || isActive === true 
+    ...(isActive !== undefined && {
+      isActive: isActive === 'true' || isActive === true
     }),
     ...otherFields
   };
@@ -230,7 +235,7 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
   // Process options if provided
   if (options) {
     let processedOptions = [];
-    
+
     try {
       if (typeof options === 'string') {
         processedOptions = JSON.parse(options);
@@ -242,14 +247,14 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
     } catch (error) {
       throw new ApiError(`Invalid options format: ${error.message}`, 400);
     }
-    
+
     // Validate and process each option
     if (processedOptions.length > 0) {
       processedOptions = processedOptions.map(option => {
         if (!option.name || !option.value) {
           throw new ApiError('Each option must have name and value', 400);
         }
-        
+
         return {
           name: option.name,
           value: option.value,
@@ -258,33 +263,34 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
           isDefault: option.isDefault === true || option.isDefault === 'true'
         };
       });
-      
+
       updateData.options = processedOptions;
     }
   }
 
   // Handle option image removal if specified
   if (removeOptionImages) {
-    const imagesToRemove = Array.isArray(removeOptionImages) 
-      ? removeOptionImages 
+    const imagesToRemove = Array.isArray(removeOptionImages)
+      ? removeOptionImages
       : [removeOptionImages];
-    
+
     // Delete images from storage
-    for (const imageUrl of imagesToRemove) {
-      try {
-        await deleteImage(imageUrl);
-      } catch (error) {
-        console.error(`Failed to delete image ${imageUrl}: ${error.message}`);
-        // Continue with other images even if one fails
+    for (const option of customization.options) {
+      if (option.image && imagesToRemove.includes(option.image)) {
+        try {
+          await imageService.deleteImage(option.imagePath || option.image);
+        } catch (error) {
+          console.error(`Failed to delete image ${option.image}: ${error.message}`);
+        }
       }
     }
-    
+
     // Update the options array by removing the specified images
     if (!updateData.options) {
       // If options were not provided in this update, use existing ones
       updateData.options = customization.options.map(option => {
         if (option.image && imagesToRemove.includes(option.image)) {
-          return { ...option, image: null };
+          return { ...option, image: null, imagePath: null };
         }
         return option;
       });
@@ -292,7 +298,7 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
       // If options were provided, remove images from them
       updateData.options = updateData.options.map(option => {
         if (option.image && imagesToRemove.includes(option.image)) {
-          return { ...option, image: null };
+          return { ...option, image: null, imagePath: null };
         }
         return option;
       });
@@ -303,35 +309,36 @@ exports.updateProductCustomization = asyncHandler(async (req, res) => {
   if (req.files && req.files.length > 0) {
     // Get current options for update
     const currentOptions = updateData.options || customization.options;
-    
+
     // Process option indices if provided
-    const optionIndices = req.body.optionIndices 
-      ? (Array.isArray(req.body.optionIndices) 
-          ? req.body.optionIndices.map(i => parseInt(i)) 
-          : [parseInt(req.body.optionIndices)])
+    const optionIndices = req.body.optionIndices
+      ? (Array.isArray(req.body.optionIndices)
+        ? req.body.optionIndices.map(i => parseInt(i))
+        : [parseInt(req.body.optionIndices)])
       : [];
-    
+
     // Upload each image
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
       const optionIndex = optionIndices[i] !== undefined ? optionIndices[i] : i;
-      
+
       // Check if the option index is valid
       if (optionIndex >= currentOptions.length) {
         throw new ApiError(`Invalid option index: ${optionIndex}`, 400);
       }
-      
+
       // Upload the image
       try {
-        const result = await uploadImage(file, 'customizations');
-        
+        const result = await imageService.uploadImage(file, 'customizations');
+
         // Update the option with the new image
         currentOptions[optionIndex].image = result.url;
+        currentOptions[optionIndex].imagePath = result.path;
       } catch (error) {
         throw new ApiError(`Image upload failed: ${error.message}`, 500);
       }
     }
-    
+
     // Update the options in the update data
     updateData.options = currentOptions;
   }
@@ -355,9 +362,9 @@ exports.deleteProductCustomization = asyncHandler(async (req, res) => {
   const { productId, id } = req.params;
 
   // Find the customization
-  const customization = await ProductCustomization.findOne({ 
-    _id: id, 
-    productId 
+  const customization = await ProductCustomization.findOne({
+    _id: id,
+    productId
   });
 
   if (!customization) {

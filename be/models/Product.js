@@ -1,6 +1,7 @@
 // models/Product.js
 const mongoose = require('mongoose');
-
+const slugify = require('slugify');
+const mongoosePaginate = require('mongoose-paginate-v2');
 const ProductSchema = new mongoose.Schema(
   {
     name: {
@@ -32,7 +33,14 @@ const ProductSchema = new mongoose.Schema(
     },
     images: [
       {
-        url: String,
+        url: {
+          type: String,
+          required: true
+        },
+        path: {
+          type: String,
+          description: 'Storage path or S3 key'
+        },
         altText: String,
         isDefault: {
           type: Boolean,
@@ -145,5 +153,5 @@ ProductSchema.pre('save', function(next) {
   }
   next();
 });
-
+ProductSchema.plugin(mongoosePaginate);
 module.exports = mongoose.model('Product', ProductSchema);
