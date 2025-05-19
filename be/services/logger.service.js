@@ -1,0 +1,3 @@
+// Ghi log
+
+module.exports = {};
