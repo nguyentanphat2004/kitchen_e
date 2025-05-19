@@ -328,6 +328,8 @@ exports.resendVerification = asyncHandler(async (req, res, next) => {
 
   // Gửi email
   try {
+    console.log('🚀 Bắt đầu gửi email xác thực');
+  
     await sendEmail({
       to: user.email,
       subject: 'Xác thực tài khoản',
@@ -337,15 +339,20 @@ exports.resendVerification = asyncHandler(async (req, res, next) => {
         verifyUrl
       }
     });
-
-    return ApiResponse.success(res, null, 'Email xác thực đã được gửi lại');
+  
+    console.log('✅ Gửi email xong, chuẩn bị gửi JWT');
+  
+    sendTokenResponse(user, 201, res);
+  
+    console.log('✅ Gửi token xong');
   } catch (error) {
-    // Nếu có lỗi khi gửi email, xóa token và báo lỗi
+    console.error('❌ Lỗi chi tiết:', error);
+    
     user.emailVerificationToken = undefined;
     user.emailVerificationExpire = undefined;
     await user.save({ validateBeforeSave: false });
-
-    return next(new ApiError('Không thể gửi email xác thực', 500));
+  
+    return next(new ApiError('Lỗi xử lý sau khi gửi email: ' + error.message, 500));
   }
 });
 
@@ -419,37 +426,46 @@ exports.linkFacebook = (req, res, next) => {
  * Helper: Gửi token JWT trong response
  */
 const sendTokenResponse = (user, statusCode, res) => {
-  // Tạo token
-  const token = user.getSignedJwtToken();
+  try {
+    // Tạo token
+    const token = user.getSignedJwtToken();
+    console.log('✅ JWT token đã được tạo');
 
-  // Thiết lập cookie
-  const options = {
-    expires: new Date(
-      Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000
-    ),
-    httpOnly: true
-  };
+    // Thiết lập cookie
+    const cookieExpire = process.env.JWT_COOKIE_EXPIRE || 30; // Giá trị mặc định nếu không có biến môi trường
+    const options = {
+      expires: new Date(
+        Date.now() + cookieExpire * 24 * 60 * 60 * 1000
+      ),
+      httpOnly: true
+    };
 
-  // Thêm secure=true trong môi trường production
-  if (process.env.NODE_ENV === 'production') {
-    options.secure = true;
+    // Thêm secure=true trong môi trường production
+    if (process.env.NODE_ENV === 'production') {
+      options.secure = true;
+    }
+
+    console.log('✅ Chuẩn bị gửi response');
+    res
+      .status(statusCode)
+      .cookie('token', token, options)
+      .json({
+        success: true,
+        token,
+        user: {
+          id: user._id,
+          email: user.email,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isEmailVerified: user.isEmailVerified,
+          avatar: user.avatar
+        }
+      });
+    console.log('✅ Gửi token xong');
+  } catch (error) {
+    console.error('❌ Lỗi trong sendTokenResponse:', error);
+    throw error; // Ném lại lỗi để catch bên ngoài xử lý
   }
-
-  res
-    .status(statusCode)
-    .cookie('token', token, options)
-    .json({
-      success: true,
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        username: user.username,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-        avatar: user.avatar
-      }
-    });
 };

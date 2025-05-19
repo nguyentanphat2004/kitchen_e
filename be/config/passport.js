@@ -60,11 +60,11 @@ passport.use(
     },
     async (email, password, done) => {
       try {
-        // Tìm người dùng bằng email
+        // Tìm người dùng bằng email VÀ bao gồm trường password
         const user = await User.findOne({
           $or: [{ email: email.toLowerCase() }, { username: email }],
           isDeleted: false
-        });
+        }).select('+password'); // Thêm dòng này để lấy cả trường password
         
         if (!user) {
           return done(null, false, { message: 'Email hoặc mật khẩu không đúng' });
