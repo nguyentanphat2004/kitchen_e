@@ -7,8 +7,10 @@ import AuthPage from './pages/client/Auth/Authpage';
 import AlwaysPanProductPage from './pages/client/Product/ProductDetail';
 import CheckoutPage from './pages/client/Checkout/CheckoutPage';
 import BakewareCategoryPage from './pages/client/Category/BakewareCategoryPage';
+import OrdersPage from './pages/client/order/Myorder';
+import ProfilePage from './pages/client/Auth/UserProfile';
 
-// Lazy load all pages
+// Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
 const ProductList = React.lazy(() => import('./pages/products/ProductList'));
 const CategoryManagement = React.lazy(() => import('./pages/products/CategoryManagement'));
@@ -28,7 +30,7 @@ const BestsellersReport = React.lazy(() => import('./pages/reports/BestsellersRe
 const CustomerReport = React.lazy(() => import('./pages/reports/CustomerReport'));
 const AIAssistant = React.lazy(() => import('./pages/ai-assistant/AIAssitantManagement'));
 const SystemSettings = React.lazy(() => import('./pages/settings/SystemSetting'));
-
+const VouchersPage = React.lazy(() => import('./pages/client/Voucher/VouchersPage'));
 // Loading component for Suspense
 const Loading = () => (
   <div className="flex items-center justify-center h-screen w-full">
@@ -41,8 +43,29 @@ const App: React.FC = () => {
     <Router>
       <Toaster position="top-right" />
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* Client routes */}
+        <Route path="/shop" element={<Clientsetup />}>
+          <Route index element={<Navigate to="/shop/home" replace />} />
+          <Route path="home" element={<div>Home Page</div>} />
+          <Route path="category/:categoryId" element={<BakewareCategoryPage />} />
+          <Route path="product/:productId" element={<AlwaysPanProductPage />} />
+          <Route path="checkout" element={<CheckoutPage />} />
+          
+          {/* Account related pages */}
+          <Route path="account">
+            <Route index element={<ProfilePage />} />
+            <Route path="profile" element={<ProfilePage />} />
+            <Route path="orders" element={<OrdersPage />} />
+            <Route path="vouchers" element={<VouchersPage />} />
+            <Route path="wishlist" element={<div>Wishlist Page</div>} />
+          </Route>
+        </Route>
+
+        {/* Authentication */}
+        <Route path="/auth" element={<AuthPage />} />
         
+        {/* Admin Dashboard routes */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route 
           element={
             <DashboardLayout>
@@ -53,11 +76,6 @@ const App: React.FC = () => {
           }
         >
           {/* Dashboard */}
-          <Route path="client" element={<Clientsetup />} />
-          <Route path="auth" element={<AuthPage />} />
-          <Route path="details" element={<AlwaysPanProductPage />} />
-          <Route path="checkout" element={<CheckoutPage />} />
-          <Route path="category" element={<BakewareCategoryPage />} />
           <Route path="dashboard" element={<Dashboard />} />
           
           {/* Products */}
