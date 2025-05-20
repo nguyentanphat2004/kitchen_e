@@ -1,113 +1,78 @@
 import React, { useState } from 'react';
 import { 
-  Package, Search, PlusCircle, Edit, Trash2, Eye, 
-  ArrowUpDown, ChevronLeft, ChevronRight, Filter,
-  Download, Calendar, Tag, DollarSign
+  Tag, Search, PlusCircle, Edit, Trash2, Eye, 
+  ArrowUpDown, ChevronLeft, ChevronRight, FilterX,
+  Upload, MoreHorizontal
 } from 'lucide-react';
 
-interface Bundle {
+interface Category {
   id: string;
   name: string;
   description: string;
   image?: string;
-  startDate: string;
-  endDate: string;
-  isActive: boolean;
-  discountType: 'percentage' | 'fixed';
-  discountValue: number;
-  totalItems: number;
+  parentId?: string;
   slug: string;
+  featured: boolean;
+  productCount: number;
+  displayOrder: number;
 }
 
 // Mock data
-const mockBundles: Bundle[] = Array(20).fill(null).map((_, index) => {
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - Math.floor(Math.random() * 30));
-  
-  const endDate = new Date(startDate);
-  endDate.setDate(endDate.getDate() + Math.floor(Math.random() * 90) + 30);
-  
-  return {
-    id: `bundle-${1000 + index}`,
-    name: [
-      'Bộ dụng cụ nhà bếp cơ bản', 'Combo nấu ăn gia đình', 'Trọn bộ nhà bếp hiện đại',
-      'Combo dành cho người mới bắt đầu', 'Bộ sản phẩm nấu ăn chuyên nghiệp', 'Combo làm bánh',
-      'Trọn bộ nấu ăn châu Á', 'Combo nhà bếp tiết kiệm'
-    ][index % 8],
-    description: `Mô tả cho combo ${index + 1} với nhiều thông tin chi tiết về các sản phẩm thuộc combo này.`,
-    image: index % 3 === 0 ? `/bundle-${index}.jpg` : undefined,
-    startDate: startDate.toLocaleDateString('vi-VN'),
-    endDate: endDate.toLocaleDateString('vi-VN'),
-    isActive: startDate <= new Date() && endDate >= new Date(),
-    discountType: index % 2 === 0 ? 'percentage' : 'fixed',
-    discountValue: index % 2 === 0 ? Math.floor(Math.random() * 30) + 5 : Math.floor(Math.random() * 500000) + 50000,
-    totalItems: Math.floor(Math.random() * 10) + 2,
-    slug: [
-      'bo-dung-cu-nha-bep-co-ban', 'combo-nau-an-gia-dinh', 'tron-bo-nha-bep-hien-dai',
-      'combo-cho-nguoi-moi-bat-dau', 'bo-san-pham-nau-an-chuyen-nghiep', 'combo-lam-banh',
-      'tron-bo-nau-an-chau-a', 'combo-nha-bep-tiet-kiem'
-    ][index % 8]
-  };
-});
+const mockCategories: Category[] = Array(20).fill(null).map((_, index) => ({
+  id: `cat-${1000 + index}`,
+  name: [
+    'Dao/kéo', 'Nồi/chảo', 'Đồ điện tử', 'Phụ kiện nhà bếp', 
+    'Bếp/lò', 'Dụng cụ làm bánh', 'Dụng cụ pha chế', 'Thiết bị lưu trữ'
+  ][index % 8],
+  description: `Mô tả cho danh mục ${index + 1} với nhiều thông tin chi tiết về các sản phẩm thuộc danh mục này.`,
+  slug: [
+    'dao-keo', 'noi-chao', 'do-dien-tu', 'phu-kien-nha-bep', 
+    'bep-lo', 'dung-cu-lam-banh', 'dung-cu-pha-che', 'thiet-bi-luu-tru'
+  ][index % 8],
+  parentId: index % 3 === 0 ? undefined : `cat-${1000 + Math.floor(index / 3) * 3}`,
+  featured: index % 5 === 0,
+  productCount: Math.floor(Math.random() * 50) + 1,
+  displayOrder: index + 1
+}));
 
-const BundleManagement: React.FC = () => {
-  const [bundles, setBundles] = useState<Bundle[]>(mockBundles);
+const CategoryManagement: React.FC = () => {
+  const [categories, setCategories] = useState<Category[]>(mockCategories);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [sortField, setSortField] = useState<keyof Bundle>('startDate');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [selectedBundles, setSelectedBundles] = useState<string[]>([]);
+  const [sortField, setSortField] = useState<keyof Category>('displayOrder');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [showFeaturedOnly, setShowFeaturedOnly] = useState(false);
+  const [showTopLevelOnly, setShowTopLevelOnly] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [currentCategory, setCurrentCategory] = useState<Category | null>(null);
 
   // Pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
 
   // Sorting
-  const sortedBundles = [...bundles].sort((a, b) => {
+  const sortedCategories = [...categories].sort((a, b) => {
     if (a[sortField] < b[sortField]) return sortDirection === 'asc' ? -1 : 1;
     if (a[sortField] > b[sortField]) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   });
 
   // Filtering
-  const filteredBundles = sortedBundles.filter(bundle => {
-    const matchesSearch = 
-      bundle.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      bundle.description.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = 
-      filterStatus === 'all' ? true :
-      filterStatus === 'active' ? bundle.isActive :
-      !bundle.isActive;
-    
-    // Date range filtering for start date
-    let matchesDateRange = true;
-    if (dateRange.start || dateRange.end) {
-      const bundleStartDate = new Date(bundle.startDate.split('/').reverse().join('-'));
-      
-      if (dateRange.start) {
-        const startDate = new Date(dateRange.start);
-        if (bundleStartDate < startDate) matchesDateRange = false;
-      }
-      
-      if (dateRange.end) {
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59, 999); // End of day
-        if (bundleStartDate > endDate) matchesDateRange = false;
-      }
-    }
-    
-    return matchesSearch && matchesStatus && matchesDateRange;
+  const filteredCategories = sortedCategories.filter(category => {
+    const matchesSearch = category.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         category.description.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFeatured = showFeaturedOnly ? category.featured : true;
+    const matchesTopLevel = showTopLevelOnly ? !category.parentId : true;
+    return matchesSearch && matchesFeatured && matchesTopLevel;
   });
 
-  const currentBundles = filteredBundles.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(filteredBundles.length / itemsPerPage);
+  const currentCategories = filteredCategories.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredCategories.length / itemsPerPage);
 
   // Handlers
-  const handleSort = (field: keyof Bundle) => {
+  const handleSort = (field: keyof Category) => {
     if (field === sortField) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -118,17 +83,17 @@ const BundleManagement: React.FC = () => {
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      setSelectedBundles(currentBundles.map(bundle => bundle.id));
+      setSelectedCategories(currentCategories.map(category => category.id));
     } else {
-      setSelectedBundles([]);
+      setSelectedCategories([]);
     }
   };
 
-  const handleSelectBundle = (id: string) => {
-    if (selectedBundles.includes(id)) {
-      setSelectedBundles(selectedBundles.filter(bundleId => bundleId !== id));
+  const handleSelectCategory = (id: string) => {
+    if (selectedCategories.includes(id)) {
+      setSelectedCategories(selectedCategories.filter(categoryId => categoryId !== id));
     } else {
-      setSelectedBundles([...selectedBundles, id]);
+      setSelectedCategories([...selectedCategories, id]);
     }
   };
 
@@ -136,58 +101,62 @@ const BundleManagement: React.FC = () => {
     setCurrentPage(page);
   };
 
-  const clearFilters = () => {
-    setSearchTerm('');
-    setFilterStatus('all');
-    setDateRange({ start: '', end: '' });
+  const handleAddCategory = () => {
+    setCurrentCategory(null);
+    setShowCategoryModal(true);
   };
 
-  const handleDeleteBundle = (id: string) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa gói combo này?')) {
-      setBundles(bundles.filter(bundle => bundle.id !== id));
+  const handleEditCategory = (category: Category) => {
+    setCurrentCategory(category);
+    setShowCategoryModal(true);
+  };
+
+  const handleDeleteCategory = (id: string) => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa danh mục này?')) {
+      setCategories(categories.filter(category => category.id !== id));
     }
   };
 
   const handleBulkDelete = () => {
-    if (window.confirm(`Bạn có chắc chắn muốn xóa ${selectedBundles.length} gói combo đã chọn?`)) {
-      setBundles(bundles.filter(bundle => !selectedBundles.includes(bundle.id)));
-      setSelectedBundles([]);
+    if (window.confirm(`Bạn có chắc chắn muốn xóa ${selectedCategories.length} danh mục đã chọn?`)) {
+      setCategories(categories.filter(category => !selectedCategories.includes(category.id)));
+      setSelectedCategories([]);
     }
   };
 
-  // Format discount value
-  const formatDiscount = (bundle: Bundle) => {
-    if (bundle.discountType === 'percentage') {
-      return `${bundle.discountValue}%`;
-    } else {
-      return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(bundle.discountValue);
-    }
+  const resetFilters = () => {
+    setSearchTerm('');
+    setShowFeaturedOnly(false);
+    setShowTopLevelOnly(false);
+  };
+
+  // Find parent category name
+  const getParentCategoryName = (parentId?: string) => {
+    if (!parentId) return '-';
+    const parent = categories.find(c => c.id === parentId);
+    return parent ? parent.name : '-';
   };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between">
         <h1 className="text-2xl font-bold text-gray-800 flex items-center">
-          <Package className="mr-2" size={24} />
-          Quản lý combo sản phẩm
+          <Tag className="mr-2" size={24} />
+          Quản lý danh mục
         </h1>
-        <div className="mt-4 md:mt-0 flex flex-wrap gap-2">
-          <button className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-            <Download size={16} className="mr-1" />
-            Xuất Excel
-          </button>
-          <a 
-            href="/bundles/add" 
-            className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+        <div className="mt-4 md:mt-0">
+          <button 
+            onClick={handleAddCategory}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
-            <PlusCircle size={16} className="mr-1" />
-            Thêm combo mới
-          </a>
+            <PlusCircle className="mr-2" size={16} />
+            Thêm danh mục mới
+          </button>
         </div>
       </div>
 
       {/* Filters and Search */}
-      <div className="bg-white shadow-sm rounded-lg p-6 space-y-4">
+      <div className="bg-white shadow-sm rounded-lg p-4">
         <div className="flex flex-col md:flex-row md:items-center gap-4">
           <div className="relative flex-1">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -195,7 +164,7 @@ const BundleManagement: React.FC = () => {
             </div>
             <input
               type="text"
-              placeholder="Tìm kiếm theo tên, mô tả..."
+              placeholder="Tìm kiếm danh mục..."
               className="pl-10 w-full py-2 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -203,77 +172,64 @@ const BundleManagement: React.FC = () => {
           </div>
           
           <div className="flex flex-wrap gap-2">
-            <div className="relative">
-              <select
-                className="appearance-none pl-3 pr-8 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-[150px]"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value as 'all' | 'active' | 'inactive')}
-              >
-                <option value="all">Tất cả trạng thái</option>
-                <option value="active">Đang hoạt động</option>
-                <option value="inactive">Không hoạt động</option>
-              </select>
-              <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                <Filter className="h-4 w-4 text-gray-400" />
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="flex flex-col md:flex-row md:items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Calendar className="h-5 w-5 text-gray-400" />
-              </div>
+            <div className="flex items-center">
               <input
-                type="date"
-                placeholder="Từ ngày"
-                className="pl-10 py-2 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                value={dateRange.start}
-                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                id="featured-only"
+                type="checkbox"
+                checked={showFeaturedOnly}
+                onChange={() => setShowFeaturedOnly(!showFeaturedOnly)}
+                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
               />
+              <label htmlFor="featured-only" className="ml-2 block text-sm text-gray-700">
+                Chỉ hiển thị nổi bật
+              </label>
             </div>
-            <span className="text-gray-500">đến</span>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Calendar className="h-5 w-5 text-gray-400" />
-              </div>
+            
+            <div className="flex items-center ml-4">
               <input
-                type="date"
-                placeholder="Đến ngày"
-                className="pl-10 py-2 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                value={dateRange.end}
-                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                id="top-level-only"
+                type="checkbox"
+                checked={showTopLevelOnly}
+                onChange={() => setShowTopLevelOnly(!showTopLevelOnly)}
+                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
               />
+              <label htmlFor="top-level-only" className="ml-2 block text-sm text-gray-700">
+                Chỉ hiển thị cấp cao nhất
+              </label>
             </div>
-          </div>
-          
-          <div className="flex items-center gap-2 ml-auto">
+            
             <button
-              onClick={clearFilters}
-              className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-indigo-600"
+              onClick={resetFilters}
+              className="ml-4 inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
+              <FilterX size={16} className="mr-2" />
               Xóa bộ lọc
             </button>
-            <select
-              className="appearance-none pl-3 pr-8 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              value={itemsPerPage}
-              onChange={(e) => setItemsPerPage(Number(e.target.value))}
-            >
-              <option value={10}>10 mục</option>
-              <option value={25}>25 mục</option>
-              <option value={50}>50 mục</option>
-            </select>
+            
+            <div className="relative ml-auto">
+              <select
+                className="appearance-none pl-3 pr-8 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                value={itemsPerPage}
+                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+              >
+                <option value={10}>10 mục</option>
+                <option value={25}>25 mục</option>
+                <option value={50}>50 mục</option>
+                <option value={100}>100 mục</option>
+              </select>
+              <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                <ChevronLeft className="h-4 w-4 text-gray-400" />
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Selected Items Actions */}
-      {selectedBundles.length > 0 && (
+      {selectedCategories.length > 0 && (
         <div className="bg-indigo-50 p-4 rounded-md flex items-center justify-between">
           <span className="text-indigo-700 font-medium">
-            {selectedBundles.length} combo sản phẩm được chọn
+            {selectedCategories.length} danh mục được chọn
           </span>
           <div className="flex gap-2">
             <button 
@@ -283,16 +239,13 @@ const BundleManagement: React.FC = () => {
               <Trash2 className="h-4 w-4" />
             </button>
             <button className="px-3 py-1 bg-white text-indigo-600 border border-indigo-200 rounded-md hover:bg-indigo-50">
-              Kích hoạt
-            </button>
-            <button className="px-3 py-1 bg-white text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">
-              Vô hiệu hóa
+              Cập nhật hàng loạt
             </button>
           </div>
         </div>
       )}
 
-      {/* Bundles Table */}
+      {/* Categories Table */}
       <div className="overflow-x-auto bg-white shadow-sm rounded-lg">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -303,7 +256,7 @@ const BundleManagement: React.FC = () => {
                     type="checkbox"
                     className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                     onChange={handleSelectAll}
-                    checked={selectedBundles.length > 0 && selectedBundles.length === currentBundles.length}
+                    checked={selectedCategories.length > 0 && selectedCategories.length === currentCategories.length}
                   />
                 </div>
               </th>
@@ -312,7 +265,7 @@ const BundleManagement: React.FC = () => {
                   className="flex items-center cursor-pointer"
                   onClick={() => handleSort('name')}
                 >
-                  Tên combo
+                  Tên danh mục
                   {sortField === 'name' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
@@ -321,10 +274,10 @@ const BundleManagement: React.FC = () => {
               <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                 <div 
                   className="flex items-center cursor-pointer"
-                  onClick={() => handleSort('totalItems')}
+                  onClick={() => handleSort('slug')}
                 >
-                  Sản phẩm
-                  {sortField === 'totalItems' && (
+                  Slug
+                  {sortField === 'slug' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
                 </div>
@@ -332,10 +285,10 @@ const BundleManagement: React.FC = () => {
               <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                 <div 
                   className="flex items-center cursor-pointer"
-                  onClick={() => handleSort('discountValue')}
+                  onClick={() => handleSort('parentId')}
                 >
-                  Giảm giá
-                  {sortField === 'discountValue' && (
+                  Danh mục cha
+                  {sortField === 'parentId' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
                 </div>
@@ -343,10 +296,10 @@ const BundleManagement: React.FC = () => {
               <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                 <div 
                   className="flex items-center cursor-pointer"
-                  onClick={() => handleSort('startDate')}
+                  onClick={() => handleSort('productCount')}
                 >
-                  Bắt đầu
-                  {sortField === 'startDate' && (
+                  Số sản phẩm
+                  {sortField === 'productCount' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
                 </div>
@@ -354,10 +307,10 @@ const BundleManagement: React.FC = () => {
               <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                 <div 
                   className="flex items-center cursor-pointer"
-                  onClick={() => handleSort('endDate')}
+                  onClick={() => handleSort('displayOrder')}
                 >
-                  Kết thúc
-                  {sortField === 'endDate' && (
+                  Thứ tự
+                  {sortField === 'displayOrder' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
                 </div>
@@ -365,10 +318,10 @@ const BundleManagement: React.FC = () => {
               <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                 <div 
                   className="flex items-center cursor-pointer"
-                  onClick={() => handleSort('isActive')}
+                  onClick={() => handleSort('featured')}
                 >
-                  Trạng thái
-                  {sortField === 'isActive' && (
+                  Nổi bật
+                  {sortField === 'featured' && (
                     <ArrowUpDown className={`ml-1 h-4 w-4 ${sortDirection === 'asc' ? 'text-indigo-600' : 'text-indigo-600 transform rotate-180'}`} />
                   )}
                 </div>
@@ -379,15 +332,15 @@ const BundleManagement: React.FC = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {currentBundles.map((bundle) => (
-              <tr key={bundle.id} className="hover:bg-gray-50">
+            {currentCategories.map((category) => (
+              <tr key={category.id} className="hover:bg-gray-50">
                 <td className="px-3 py-4 whitespace-nowrap">
                   <div className="flex items-center">
                     <input
                       type="checkbox"
                       className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                      checked={selectedBundles.includes(bundle.id)}
-                      onChange={() => handleSelectBundle(bundle.id)}
+                      checked={selectedCategories.includes(category.id)}
+                      onChange={() => handleSelectCategory(category.id)}
                     />
                   </div>
                 </td>
@@ -395,74 +348,61 @@ const BundleManagement: React.FC = () => {
                   <div className="flex items-center">
                     <div className="h-10 w-10 flex-shrink-0 mr-3">
                       <div className="h-10 w-10 rounded-md bg-gray-200 flex items-center justify-center">
-                        {bundle.image ? (
-                          <img src={bundle.image} alt={bundle.name} className="h-10 w-10 rounded-md object-cover" />
+                        {category.image ? (
+                          <img src={category.image} alt={category.name} className="h-10 w-10 rounded-md object-cover" />
                         ) : (
-                          <Package className="h-5 w-5 text-gray-400" />
+                          <Tag className="h-5 w-5 text-gray-400" />
                         )}
                       </div>
                     </div>
                     <div>
-                      <div className="text-sm font-medium text-gray-900">{bundle.name}</div>
-                      <div className="text-xs text-gray-500">{bundle.slug}</div>
+                      <div className="text-sm font-medium text-gray-900">{category.name}</div>
                     </div>
                   </div>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <Tag className="h-4 w-4 text-gray-500 mr-1" />
-                    <span className="text-sm text-gray-900">{bundle.totalItems} sản phẩm</span>
-                  </div>
+                  <div className="text-sm text-gray-500">{category.slug}</div>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium">
-                    <span className="flex items-center">
-                      {bundle.discountType === 'percentage' ? (
-                        <span className="text-green-600">{bundle.discountValue}%</span>
-                      ) : (
-                        <span className="flex items-center text-green-600">
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          {new Intl.NumberFormat('vi-VN').format(bundle.discountValue)} VNĐ
-                        </span>
-                      )}
-                    </span>
-                  </div>
+                  <div className="text-sm text-gray-500">{getParentCategoryName(category.parentId)}</div>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{bundle.startDate}</div>
+                  <div className="text-sm text-gray-900">{category.productCount}</div>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{bundle.endDate}</div>
+                  <div className="text-sm text-gray-900">{category.displayOrder}</div>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                    bundle.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                    category.featured ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
                   }`}>
-                    {bundle.isActive ? 'Đang hoạt động' : 'Không hoạt động'}
+                    {category.featured ? 'Nổi bật' : 'Thường'}
                   </span>
                 </td>
                 <td className="px-3 py-4 whitespace-nowrap text-center text-sm font-medium">
                   <div className="flex justify-center space-x-2">
-                    <a 
-                      href={`/bundles/${bundle.id}`}
+                    <button 
                       className="text-indigo-600 hover:text-indigo-900" 
                       title="Xem chi tiết"
                     >
                       <Eye className="h-5 w-5" />
-                    </a>
-                    <a 
-                      href={`/bundles/${bundle.id}/edit`}
-                      className="text-blue-600 hover:text-blue-900" 
-                      title="Sửa"
+                    </button>
+                    <button 
+                      className="text-blue-600 hover:text-blue-900"
+                      title="Sửa" 
+                      onClick={() => handleEditCategory(category)}
                     >
                       <Edit className="h-5 w-5" />
-                    </a>
+                    </button>
                     <button 
                       className="text-red-600 hover:text-red-900" 
                       title="Xóa"
-                      onClick={() => handleDeleteBundle(bundle.id)}
+                      onClick={() => handleDeleteCategory(category.id)}
                     >
                       <Trash2 className="h-5 w-5" />
+                    </button>
+                    <button className="text-gray-600 hover:text-gray-900" title="Thêm">
+                      <MoreHorizontal className="h-5 w-5" />
                     </button>
                   </div>
                 </td>
@@ -476,7 +416,7 @@ const BundleManagement: React.FC = () => {
       {totalPages > 0 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-700">
-            Hiển thị <span className="font-medium">{indexOfFirstItem + 1}</span> đến <span className="font-medium">{Math.min(indexOfLastItem, filteredBundles.length)}</span> của <span className="font-medium">{filteredBundles.length}</span> combo sản phẩm
+            Hiển thị <span className="font-medium">{indexOfFirstItem + 1}</span> đến <span className="font-medium">{Math.min(indexOfLastItem, filteredCategories.length)}</span> của <span className="font-medium">{filteredCategories.length}</span> danh mục
           </div>
           <div className="flex items-center space-x-2">
             <button
@@ -523,8 +463,164 @@ const BundleManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Add/Edit Category Modal */}
+      {showCategoryModal && (
+        <div className="fixed z-10 inset-0 overflow-y-auto">
+          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      {currentCategory ? 'Sửa danh mục' : 'Thêm danh mục mới'}
+                    </h3>
+                    <div className="mt-4">
+                      <form className="space-y-4">
+                        <div>
+                          <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+                            Tên danh mục <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="name"
+                            id="name"
+                            defaultValue={currentCategory?.name || ''}
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label htmlFor="slug" className="block text-sm font-medium text-gray-700">
+                            Slug <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="slug"
+                            id="slug"
+                            defaultValue={currentCategory?.slug || ''}
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label htmlFor="description" className="block text-sm font-medium text-gray-700">
+                            Mô tả
+                          </label>
+                          <textarea
+                            name="description"
+                            id="description"
+                            rows={3}
+                            defaultValue={currentCategory?.description || ''}
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label htmlFor="parentId" className="block text-sm font-medium text-gray-700">
+                            Danh mục cha
+                          </label>
+                          <select
+                            id="parentId"
+                            name="parentId"
+                            defaultValue={currentCategory?.parentId || ''}
+                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                          >
+                            <option value="">Không có danh mục cha</option>
+                            {categories.filter(c => c.id !== currentCategory?.id).map(category => (
+                              <option key={category.id} value={category.id}>
+                                {category.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        
+                        <div>
+                          <label htmlFor="displayOrder" className="block text-sm font-medium text-gray-700">
+                            Thứ tự hiển thị
+                          </label>
+                          <input
+                            type="number"
+                            name="displayOrder"
+                            id="displayOrder"
+                            defaultValue={currentCategory?.displayOrder || 0}
+                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                          />
+                        </div>
+                        
+                        <div className="flex items-start">
+                          <div className="flex items-center h-5">
+                            <input
+                              id="featured"
+                              name="featured"
+                              type="checkbox"
+                              defaultChecked={currentCategory?.featured || false}
+                              className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                            />
+                          </div>
+                          <div className="ml-3 text-sm">
+                            <label htmlFor="featured" className="font-medium text-gray-700">
+                              Đánh dấu là danh mục nổi bật
+                            </label>
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">
+                            Hình ảnh danh mục
+                          </label>
+                          <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+                            <div className="space-y-1 text-center">
+                              <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                              <div className="flex text-sm text-gray-600">
+                                <label
+                                  htmlFor="file-upload"
+                                  className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
+                                >
+                                  <span>Tải lên một tệp</span>
+                                  <input id="file-upload" name="file-upload" type="file" className="sr-only" />
+                                </label>
+                                <p className="pl-1">hoặc kéo và thả</p>
+                              </div>
+                              <p className="text-xs text-gray-500">
+                                PNG, JPG, GIF tối đa 2MB
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={() => setShowCategoryModal(false)}
+                >
+                  {currentCategory ? 'Cập nhật' : 'Thêm mới'}
+                </button>
+                <button
+                  type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={() => setShowCategoryModal(false)}
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default BundleManagement;
+export default CategoryManagement;
