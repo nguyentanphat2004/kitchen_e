@@ -1,14 +1,15 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useRoutes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { AuthProvider } from './features/auth/contexts/auth-context';
 import DashboardLayout from './components/layout/dashboard-layout';
 import Clientsetup from './components/layout/Clientsetup';
-import AuthPage from './pages/client/Auth/Authpage';
-import AlwaysPanProductPage from './pages/client/Product/ProductDetail';
 import CheckoutPage from './pages/client/Checkout/CheckoutPage';
 import BakewareCategoryPage from './pages/client/Category/BakewareCategoryPage';
 import OrdersPage from './pages/client/order/Myorder';
-import ProfilePage from './pages/client/Auth/UserProfile';
+import AlwaysPanProductPage from './pages/client/Product/ProductDetail';
+import { authRoutes } from './features/auth/routes/auth-routes';
+import ProtectedRoute from './features/auth/components/protected-route';
 
 // Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
@@ -31,6 +32,7 @@ const CustomerReport = React.lazy(() => import('./pages/reports/CustomerReport')
 const AIAssistant = React.lazy(() => import('./pages/ai-assistant/AIAssitantManagement'));
 const SystemSettings = React.lazy(() => import('./pages/settings/SystemSetting'));
 const VouchersPage = React.lazy(() => import('./pages/client/Voucher/VouchersPage'));
+
 // Loading component for Suspense
 const Loading = () => (
   <div className="flex items-center justify-center h-screen w-full">
@@ -38,130 +40,181 @@ const Loading = () => (
   </div>
 );
 
+// AppRoutes component to use routes with the AuthProvider
+const AppRoutes: React.FC = () => {
+  // Define your routes hierarchy
+  const routes = [
+    // Auth routes (already defined in authRoutes)
+    ...authRoutes,
+    
+    // Client routes
+    {
+      path: '/shop',
+      element: <Clientsetup />,
+      children: [
+        { index: true, element: <Navigate to="/shop/home" replace /> },
+        { path: 'home', element: <div>Home Page</div> },
+        { path: 'category/:categoryId', element: <BakewareCategoryPage /> },
+        { path: 'product/:productId', element: <AlwaysPanProductPage /> },
+        { path: 'checkout', element: <CheckoutPage /> },
+        
+        // Account related pages
+        {
+          path: 'account',
+          children: [
+            { index: true, element: <ProtectedRoute><ProfilePage /></ProtectedRoute> },
+            { path: 'orders', element: <ProtectedRoute><OrdersPage /></ProtectedRoute> },
+            { path: 'vouchers', element: <ProtectedRoute><VouchersPage /></ProtectedRoute> },
+            { path: 'wishlist', element: <ProtectedRoute><div>Wishlist Page</div></ProtectedRoute> },
+          ]
+        }
+      ]
+    },
+    
+    // Admin Dashboard routes
+    {
+      path: '/',
+      element: <Navigate to="/dashboard" replace />
+    },
+    {
+      path: '/',
+      element: (
+        <DashboardLayout>
+          <React.Suspense fallback={<Loading />}>
+            <Outlet />
+          </React.Suspense>
+        </DashboardLayout>
+      ),
+      children: [
+        // Dashboard
+        { path: 'dashboard', element: <Dashboard /> },
+        
+        // Products
+        {
+          path: 'products',
+          children: [
+            { index: true, element: <ProductList /> },
+            { path: 'add', element: <AddProduct /> },
+            { path: ':id/edit', element: <AddProduct /> },
+            { path: 'categories', element: <CategoryManagement /> }
+          ]
+        },
+        
+        // Orders
+        {
+          path: 'orders',
+          children: [
+            { index: true, element: <Orders /> },
+            { path: 'processing', element: <Orders /> },
+            { path: 'shipping', element: <Orders /> },
+            { path: 'completed', element: <Orders /> },
+            { path: 'cancelled', element: <Orders /> },
+            { path: ':id', element: <div>Order Details</div> }
+          ]
+        },
+        
+        // Customers
+        {
+          path: 'customers',
+          children: [
+            { index: true, element: <CustomerList /> },
+            { path: ':id', element: <div>Customer Details</div> }
+          ]
+        },
+        
+        // Marketing
+        {
+          path: 'marketing',
+          children: [
+            { index: true, element: <Navigate to="/marketing/flash-sales" replace /> },
+            { path: 'vouchers', element: <Vouchers /> },
+            { path: 'flash-sales', element: <FlashSaleList /> },
+            { path: 'flash-sales/add', element: <AddFlashSale /> },
+            { path: 'flash-sales/:id/edit', element: <AddFlashSale /> },
+            { path: 'bundles', element: <BundleManagement /> },
+            { path: 'bundles/add', element: <div>Add Bundle</div> },
+            { path: 'bundles/:id/edit', element: <div>Edit Bundle</div> }
+          ]
+        },
+        
+        // Recipes
+        {
+          path: 'recipes',
+          children: [
+            { index: true, element: <RecipeManagement /> },
+            { path: 'add', element: <AddRecipe /> },
+            { path: ':id/edit', element: <AddRecipe /> }
+          ]
+        },
+        
+        // Reviews
+        { path: 'reviews', element: <ReviewManagement /> },
+        
+        // Notifications
+        {
+          path: 'notifications',
+          children: [
+            { index: true, element: <NotificationManagement /> },
+            { path: 'create', element: <div>Create Notification</div> },
+            { path: ':id/edit', element: <div>Edit Notification</div> }
+          ]
+        },
+        
+        // Reports
+        {
+          path: 'reports',
+          children: [
+            { index: true, element: <Navigate to="/reports/sales" replace /> },
+            { path: 'sales', element: <SalesReport /> },
+            { path: 'bestsellers', element: <BestsellersReport /> },
+            { path: 'customers', element: <CustomerReport /> }
+          ]
+        },
+        
+        // AI Assistant
+        { path: 'ai-assistant', element: <AIAssistant /> },
+        
+        // Settings
+        { path: 'settings', element: <SystemSettings /> }
+      ]
+    },
+    
+    // Fallback route for 404
+    {
+      path: '*',
+      element: (
+        <div className="flex items-center justify-center h-screen">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-gray-800 mb-4">404</h1>
+            <h2 className="text-2xl font-medium text-gray-600 mb-6">Không tìm thấy trang</h2>
+            <a 
+              href="/dashboard" 
+              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+            >
+              Trở về trang chủ
+            </a>
+          </div>
+        </div>
+      )
+    }
+  ];
+  
+  const element = useRoutes(routes);
+  return element;
+};
+
+// Import your profile page
+const ProfilePage = React.lazy(() => import('./features/auth/pages/profile-page'));
+
 const App: React.FC = () => {
   return (
     <Router>
       <Toaster position="top-right" />
-      <Routes>
-        {/* Client routes */}
-        <Route path="/shop" element={<Clientsetup />}>
-          <Route index element={<Navigate to="/shop/home" replace />} />
-          <Route path="home" element={<div>Home Page</div>} />
-          <Route path="category/:categoryId" element={<BakewareCategoryPage />} />
-          <Route path="product/:productId" element={<AlwaysPanProductPage />} />
-          <Route path="checkout" element={<CheckoutPage />} />
-          
-          {/* Account related pages */}
-          <Route path="account">
-            <Route index element={<ProfilePage />} />
-            <Route path="profile" element={<ProfilePage />} />
-            <Route path="orders" element={<OrdersPage />} />
-            <Route path="vouchers" element={<VouchersPage />} />
-            <Route path="wishlist" element={<div>Wishlist Page</div>} />
-          </Route>
-        </Route>
-
-        {/* Authentication */}
-        <Route path="/auth" element={<AuthPage />} />
-        
-        {/* Admin Dashboard routes */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route 
-          element={
-            <DashboardLayout>
-              <React.Suspense fallback={<Loading />}>
-                <Outlet />
-              </React.Suspense>
-            </DashboardLayout>
-          }
-        >
-          {/* Dashboard */}
-          <Route path="dashboard" element={<Dashboard />} />
-          
-          {/* Products */}
-          <Route path="products">
-            <Route index element={<ProductList />} />
-            <Route path="add" element={<AddProduct />} />
-            <Route path=":id/edit" element={<AddProduct />} />
-            <Route path="categories" element={<CategoryManagement />} />
-          </Route>
-          
-          {/* Orders */}
-          <Route path="orders">
-            <Route index element={<Orders />} />
-            <Route path="processing" element={<Orders />} />
-            <Route path="shipping" element={<Orders />} />
-            <Route path="completed" element={<Orders />} />
-            <Route path="cancelled" element={<Orders />} />
-            <Route path=":id" element={<div>Order Details</div>} />
-          </Route>
-          
-          {/* Customers */}
-          <Route path="customers">
-            <Route index element={<CustomerList />} />
-            <Route path=":id" element={<div>Customer Details</div>} />
-          </Route>
-          
-          {/* Marketing */}
-          <Route path="marketing">
-            <Route index element={<Navigate to="/marketing/flash-sales" replace />} />
-            <Route path="vouchers" element={<Vouchers />} />
-            <Route path="flash-sales" element={<FlashSaleList />} />
-            <Route path="flash-sales/add" element={<AddFlashSale />} />
-            <Route path="flash-sales/:id/edit" element={<AddFlashSale />} />
-            <Route path="bundles" element={<BundleManagement />} />
-            <Route path="bundles/add" element={<div>Add Bundle</div>} />
-            <Route path="bundles/:id/edit" element={<div>Edit Bundle</div>} />
-          </Route>
-          
-          {/* Recipes */}
-          <Route path="recipes">
-            <Route index element={<RecipeManagement />} />
-            <Route path="add" element={<AddRecipe />} />
-            <Route path=":id/edit" element={<AddRecipe />} />
-          </Route>
-          
-          {/* Reviews */}
-          <Route path="reviews" element={<ReviewManagement />} />
-          
-          {/* Notifications */}
-          <Route path="notifications">
-            <Route index element={<NotificationManagement />} />
-            <Route path="create" element={<div>Create Notification</div>} />
-            <Route path=":id/edit" element={<div>Edit Notification</div>} />
-          </Route>
-          
-          {/* Reports */}
-          <Route path="reports">
-            <Route index element={<Navigate to="/reports/sales" replace />} />
-            <Route path="sales" element={<SalesReport />} />
-            <Route path="bestsellers" element={<BestsellersReport />} />
-            <Route path="customers" element={<CustomerReport />} />
-          </Route>
-          
-          {/* AI Assistant */}
-          <Route path="ai-assistant" element={<AIAssistant />} />
-          
-          {/* Settings */}
-          <Route path="settings" element={<SystemSettings />} />
-        </Route>
-        
-        {/* Fallback route for 404 */}
-        <Route path="*" element={
-          <div className="flex items-center justify-center h-screen">
-            <div className="text-center">
-              <h1 className="text-4xl font-bold text-gray-800 mb-4">404</h1>
-              <h2 className="text-2xl font-medium text-gray-600 mb-6">Không tìm thấy trang</h2>
-              <a 
-                href="/dashboard" 
-                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-              >
-                Trở về trang chủ
-              </a>
-            </div>
-          </div>
-        } />
-      </Routes>
+      <AuthProvider>
+        <React.Suspense fallback={<Loading />}>
+          <AppRoutes />
+        </React.Suspense>
+      </AuthProvider>
     </Router>
   );
 };
