@@ -41,15 +41,16 @@ class AuthService {
    * @param loginData Login credentials
    * @returns Promise with login response
    */
-  async login(loginData: LoginRequest): Promise<LoginResponse> {
-    const response = await axiosInstance.post<LoginResponse>('/login', loginData);
-    
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
-    }
-    
-    return response.data;
+ async login(loginData: LoginRequest): Promise<LoginResponse> {
+  const response = await axiosInstance.post<LoginResponse>('/login', loginData);
+  
+  if (!response.data.token) {
+    throw new Error('Không nhận được token từ server');
   }
+  
+  localStorage.setItem('token', response.data.token);
+  return response.data;
+}
 
   /**
    * Register new user

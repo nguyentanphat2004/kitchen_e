@@ -41,8 +41,5 @@ export const authRoutes: RouteObject[] = [
       }
     ]
   },
-  {
-    path: 'shop/account',
-    element: <ProtectedRoute><ProfilePage /></ProtectedRoute>
-  }
+ 
 ];

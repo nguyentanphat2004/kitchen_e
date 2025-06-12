@@ -80,7 +80,7 @@ exports.register = asyncHandler(async (req, res, next) => {
  * @access  Public
  */
 exports.login = (req, res, next) => {
-  passport.authenticate('local', (err, user, info) => {
+  passport.authenticate('local', async (err, user, info) => {
     if (err) {
       return next(new ApiError('Lỗi đăng nhập', 500));
     }
@@ -89,12 +89,13 @@ exports.login = (req, res, next) => {
       return next(new ApiError(info.message || 'Email hoặc mật khẩu không đúng', 401));
     }
 
-    // Cập nhật thời gian đăng nhập cuối
-    user.lastLogin = Date.now();
-    user.save({ validateBeforeSave: false });
-
-    // Gửi token JWT
-    sendTokenResponse(user, 200, res);
+    try {
+      user.lastLogin = Date.now();
+      await user.save({ validateBeforeSave: false }); // 👈 Thêm await
+      sendTokenResponse(user, 200, res);
+    } catch (saveError) {
+      return next(new ApiError('Lỗi khi cập nhật thông tin đăng nhập', 500));
+    }
   })(req, res, next);
 };
 

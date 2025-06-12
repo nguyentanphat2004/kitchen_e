@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useRoutes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './features/auth/contexts/auth-context';
 import DashboardLayout from './components/layout/dashboard-layout';
 import Clientsetup from './components/layout/Clientsetup';
@@ -16,6 +17,7 @@ const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'
 const ProductList = React.lazy(() => import('./pages/products/ProductList'));
 const CategoryManagement = React.lazy(() => import('./pages/products/CategoryManagement'));
 const AddProduct = React.lazy(() => import('./pages/products/AddProduct'));
+const ProductCustomizations = React.lazy(() => import('./pages/products/ProductCustomizations'));
 const Orders = React.lazy(() => import('./pages/orders/OrderList'));
 const CustomerList = React.lazy(() => import('./pages/customers/CustomerList'));
 const AddFlashSale = React.lazy(() => import('./pages/marketing/AddFlashSale'));
@@ -33,12 +35,25 @@ const AIAssistant = React.lazy(() => import('./pages/ai-assistant/AIAssitantMana
 const SystemSettings = React.lazy(() => import('./pages/settings/SystemSetting'));
 const VouchersPage = React.lazy(() => import('./pages/client/Voucher/VouchersPage'));
 
+// Import your profile page
+const ProfilePage = React.lazy(() => import('./features/auth/pages/profile-page'));
+
 // Loading component for Suspense
 const Loading = () => (
   <div className="flex items-center justify-center h-screen w-full">
     <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
   </div>
 );
+
+// Create a client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 // AppRoutes component to use routes with the AuthProvider
 const AppRoutes: React.FC = () => {
@@ -47,16 +62,21 @@ const AppRoutes: React.FC = () => {
     // Auth routes (already defined in authRoutes)
     ...authRoutes,
     
+    // Add default /auth route that redirects to login
+    {
+      path: '/auth',
+      element: <Navigate to="/auth/login" replace />
+    },
+    
     // Client routes
     {
       path: '/shop',
-      element: <Clientsetup />,
       children: [
         { index: true, element: <Navigate to="/shop/home" replace /> },
-        { path: 'home', element: <div>Home Page</div> },
+        { path: 'home', element: <Clientsetup /> },
         { path: 'category/:categoryId', element: <BakewareCategoryPage /> },
         { path: 'product/:productId', element: <AlwaysPanProductPage /> },
-        { path: 'checkout', element: <CheckoutPage /> },
+        { path: 'checkout', element: <ProtectedRoute><CheckoutPage /></ProtectedRoute> },
         
         // Account related pages
         {
@@ -96,7 +116,8 @@ const AppRoutes: React.FC = () => {
             { index: true, element: <ProductList /> },
             { path: 'add', element: <AddProduct /> },
             { path: ':id/edit', element: <AddProduct /> },
-            { path: 'categories', element: <CategoryManagement /> }
+            { path: 'categories', element: <CategoryManagement /> },
+            { path: 'customizations', element: <ProductCustomizations /> }
           ]
         },
         
@@ -203,19 +224,18 @@ const AppRoutes: React.FC = () => {
   return element;
 };
 
-// Import your profile page
-const ProfilePage = React.lazy(() => import('./features/auth/pages/profile-page'));
-
 const App: React.FC = () => {
   return (
-    <Router>
-      <Toaster position="top-right" />
-      <AuthProvider>
-        <React.Suspense fallback={<Loading />}>
-          <AppRoutes />
-        </React.Suspense>
-      </AuthProvider>
-    </Router>
+    <QueryClientProvider client={queryClient}>
+      <Router>
+        <Toaster position="top-right" />
+        <AuthProvider>
+          <React.Suspense fallback={<Loading />}>
+            <AppRoutes />
+          </React.Suspense>
+        </AuthProvider>
+      </Router>
+    </QueryClientProvider>
   );
 };
 
