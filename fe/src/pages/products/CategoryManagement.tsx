@@ -25,9 +25,11 @@ import {
   ExclamationCircleOutlined,
   UploadOutlined,
   EyeOutlined,
+  UndoOutlined
 } from '@ant-design/icons';
 import { api } from '../../services/api';
 import type { UploadFile } from 'antd/es/upload/interface';
+import path from 'path';
 
 const { confirm } = Modal;
 const { TextArea } = Input;
@@ -79,24 +81,21 @@ const CategoryManagement: React.FC = () => {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [showDeleted, setShowDeleted] = useState(false);
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+  const [previewImage, setPreviewImage] = useState<string>('');
+  const [previewVisible, setPreviewVisible] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch categories with hierarchy
+  // Fetch categories
   const { data: categoriesData, isLoading } = useQuery({
     queryKey: ['categories', { flat: false, includeDeleted: showDeleted }],
     queryFn: async () => {
       const params = new URLSearchParams({
         flat: 'false',
-        includeProducts: 'true',
-        includeSubcategories: 'true'
+        includeProducts: 'true'
       });
       
-      if (showDeleted) {
-        params.append('includeDeleted', 'true');
-      }
-      
       const response = await api.get(`/categories?${params}`);
-      return response.data;
+      return response.data.data;
     }
   });
 
@@ -121,6 +120,7 @@ const CategoryManagement: React.FC = () => {
       handleModalClose();
     },
     onError: (error: any) => {
+      console.error('Upload error:', error.response?.data);
       toast.error(error.response?.data?.message || `Failed to ${editingCategory ? 'update' : 'create'} category`);
     }
   });
@@ -172,6 +172,13 @@ const CategoryManagement: React.FC = () => {
       // Add image file if exists
       if (fileList.length > 0 && fileList[0].originFileObj) {
         formData.append('image', fileList[0].originFileObj);
+        console.log('Adding image to form data:', fileList[0].originFileObj);
+      }
+      
+      // Debug: Log form data contents
+      console.log('Form data entries:');
+      for (let [key, value] of formData.entries()) {
+        console.log(key, value);
       }
       
       await mutation.mutateAsync(formData);
@@ -199,7 +206,7 @@ const CategoryManagement: React.FC = () => {
   const handleRestore = (category: Category) => {
     confirm({
       title: 'Restore this category?',
-      icon: <RestoreOutlined />,
+      icon: <UndoOutlined />,
       content: 'This will restore the deleted category.',
       okText: 'Yes',
       cancelText: 'No',
@@ -234,8 +241,11 @@ const CategoryManagement: React.FC = () => {
           uid: '-1',
           name: 'Current Image',
           status: 'done',
-          url: category.image
+          url: category.image,
+          thumbUrl: category.image // Add thumbUrl for better preview
         }]);
+      } else {
+        setFileList([]);
       }
     } else {
       setEditingCategory(null);
@@ -250,27 +260,82 @@ const CategoryManagement: React.FC = () => {
     setEditingCategory(null);
     form.resetFields();
     setFileList([]);
+    setPreviewVisible(false);
+    setPreviewImage('');
   };
 
-  // Upload props
+  // Handle file preview
+  const handlePreview = async (file: UploadFile) => {
+    if (!file.url && !file.preview) {
+      file.preview = await getBase64(file.originFileObj as File);
+    }
+    setPreviewImage(file.url || file.preview || '');
+    setPreviewVisible(true);
+  };
+
+  // Convert file to base64 for preview
+  const getBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+
+  // Validate file before upload
+  const beforeUpload = (file: File) => {
+    const isImage = file.type.startsWith('image/');
+    if (!isImage) {
+      toast.error('You can only upload image files!');
+      return false;
+    }
+    
+    const isLt5M = file.size / 1024 / 1024 < 5;
+    if (!isLt5M) {
+      toast.error('Image must be smaller than 5MB!');
+      return false;
+    }
+    
+    return false; // Prevent auto upload
+  };
+
+  // Handle file list change
+  const handleFileChange = ({ fileList: newFileList }: { fileList: UploadFile[] }) => {
+    // Only keep the latest file
+    const latestFileList = newFileList.slice(-1);
+    setFileList(latestFileList);
+    
+    // Log for debugging
+    console.log('File list changed:', latestFileList);
+  };
+
+  // Upload props with improved configuration
   const uploadProps = {
     fileList,
-    onChange: ({ fileList: newFileList }: { fileList: UploadFile[] }) => {
-      setFileList(newFileList);
-    },
-    beforeUpload: () => false, // Prevent auto upload
+    onChange: handleFileChange,
+    onPreview: handlePreview,
+    beforeUpload,
     accept: 'image/*',
     maxCount: 1,
     listType: 'picture-card' as const,
+    showUploadList: {
+      showPreviewIcon: true,
+      showRemoveIcon: true,
+      showDownloadIcon: false,
+    },
   };
 
-  // Build tree select data for parent categories
-  const buildTreeSelectData = (categories: Category[]): any[] => {
+  const buildTreeSelectData = (categories: Category[], excludeId?: string): any[] => {
+    const validCategories = categories.filter(cat => 
+      !cat.isDeleted && 
+      cat._id !== excludeId && 
+      cat.isActive
+    );
+    
     const categoryMap = new Map();
     const treeData: any[] = [];
 
-    // Tạo map cho tất cả categories
-    categories.forEach(category => {
+    validCategories.forEach(category => {
       categoryMap.set(category._id, {
         title: category.name,
         value: category._id,
@@ -278,14 +343,11 @@ const CategoryManagement: React.FC = () => {
       });
     });
 
-    // Xây dựng cây
-    categories.forEach(category => {
+    validCategories.forEach(category => {
       const node = categoryMap.get(category._id);
-      if (category.parentId) {
+      if (category.parentId && categoryMap.has(category.parentId)) {
         const parent = categoryMap.get(category.parentId);
-        if (parent) {
-          parent.children.push(node);
-        }
+        parent.children.push(node);
       } else {
         treeData.push(node);
       }
@@ -294,56 +356,100 @@ const CategoryManagement: React.FC = () => {
     return treeData;
   };
 
-  // Flatten categories for table display
-  const flattenCategories = (cats: Category[], level = 0): (Category & { level: number })[] => {
-    let result: (Category & { level: number })[] = [];
+  const flattenCategories = (
+    cats: Category[], 
+    level = 0, 
+    parentPrefix = ''
+  ): (Category & { level: number; displayName: string })[] => {
+    let result: (Category & { level: number; displayName: string })[] = [];
     
-    cats.forEach(cat => {
-      result.push({ ...cat, level });
+    const sortedCats = [...cats].sort((a, b) => {
+      if (a.displayOrder !== b.displayOrder) {
+        return a.displayOrder - b.displayOrder;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    
+    sortedCats.forEach(cat => {
+      const prefix = level > 0 ? '└─ ' : '';
+      const displayName = parentPrefix + prefix + cat.name;
+      
+      result.push({ 
+        ...cat, 
+        level, 
+        displayName 
+      });
+      
       if (cat.subcategories && cat.subcategories.length > 0) {
-        result = result.concat(flattenCategories(cat.subcategories, level + 1));
+        const newPrefix = level > 0 ? parentPrefix + '   ' : '';
+        result = result.concat(
+          flattenCategories(cat.subcategories, level + 1, newPrefix)
+        );
       }
     });
     
     return result;
   };
 
-  function buildCategoryTree(categories: Category[]): Category[] {
+  const buildCategoryTree = (categories: Category[]): Category[] => {
+    if (!Array.isArray(categories)) return [];
+    
     const map = new Map<string, Category & { subcategories: Category[] }>();
     const roots: (Category & { subcategories: Category[] })[] = [];
 
     categories.forEach(cat => {
-      map.set(cat._id, { ...cat, subcategories: [] });
+      map.set(cat._id, { ...cat, subcategories: cat.subcategories || [] });
     });
+
+    if (categories.length > 0 && categories[0].subcategories !== undefined) {
+      return categories;
+    }
 
     map.forEach(cat => {
       if (cat.parentId && map.has(cat.parentId)) {
-        map.get(cat.parentId)!.subcategories.push(cat);
+        const parent = map.get(cat.parentId)!;
+        if (!parent.subcategories.find(sub => sub._id === cat._id)) {
+          parent.subcategories.push(cat);
+        }
       } else {
         roots.push(cat);
       }
     });
 
     return roots;
-  }
+  };
 
-  // Sử dụng:
   const treeCategories = buildCategoryTree(categories);
   const flatCategories = flattenCategories(treeCategories);
+  const filteredCategories = showDeleted 
+    ? flatCategories 
+    : flatCategories.filter(cat => !cat.isDeleted);
 
-  // Table columns
+  // Table columns with improved image rendering
   const columns = [
     {
       title: 'Name',
       dataIndex: 'name',
       key: 'name',
-      render: (text: string, record: Category & { level: number }) => (
-        <div style={{ paddingLeft: record.level * 20 }}>
-          <Space>
+      width: 300,
+      render: (text: string, record: Category & { level: number; displayName: string }) => (
+        <div className="flex items-center">
+          <span style={{ 
+            paddingLeft: record.level * 16,
+            color: record.level > 0 ? '#666' : '#000',
+            fontSize: record.level > 0 ? '13px' : '14px'
+          }}>
+            {record.level > 0 && (
+              <span className="text-gray-400 mr-1">
+                {'└─ '}
+              </span>
+            )}
             {text}
-            {record.featured && <Tag color="gold">Featured</Tag>}
-            {!record.isActive && <Tag color="red">Inactive</Tag>}
-            {record.isDeleted && <Tag color="gray">Deleted</Tag>}
+          </span>
+          <Space className="ml-2">
+            {record.featured && <Tag color="gold" size="small">Featured</Tag>}
+            {!record.isActive && <Tag color="red" size="small">Inactive</Tag>}
+            {record.isDeleted && <Tag color="gray" size="small">Deleted</Tag>}
           </Space>
         </div>
       )
@@ -353,26 +459,39 @@ const CategoryManagement: React.FC = () => {
       dataIndex: 'image',
       key: 'image',
       width: 80,
-      render: (image: string) => (
-        image ? (
+      render: (image: string, record: Category) => {
+        // Handle different image URL formats
+        const imageUrl = image || record.imagePath;
+        
+        return imageUrl ? (
           <Image
-            src={image}
-            alt="Category"
+            src={imageUrl}
+            alt={record.name}
             width={50}
             height={50}
             style={{ objectFit: 'cover', borderRadius: 4 }}
+            fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            preview={{
+              mask: <EyeOutlined />
+            }}
+            onError={(e) => {
+              console.error('Image load error:', imageUrl);
+              // Hide broken image
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
           />
         ) : (
           <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center">
             <span className="text-gray-400 text-xs">No Image</span>
           </div>
-        )
-      )
+        );
+      }
     },
     {
       title: 'Slug',
       dataIndex: 'slug',
       key: 'slug',
+      width: 150,
       render: (slug: string) => (
         <code className="text-xs bg-gray-100 px-2 py-1 rounded">{slug}</code>
       )
@@ -382,6 +501,7 @@ const CategoryManagement: React.FC = () => {
       dataIndex: 'productsCount',
       key: 'productsCount',
       width: 80,
+      align: 'center' as const,
       render: (count: number) => (
         <Tag color="blue">{count || 0}</Tag>
       )
@@ -391,6 +511,7 @@ const CategoryManagement: React.FC = () => {
       dataIndex: 'displayOrder',
       key: 'displayOrder',
       width: 80,
+      align: 'center' as const,
       render: (order: number) => order || 0
     },
     {
@@ -414,17 +535,10 @@ const CategoryManagement: React.FC = () => {
     {
       title: 'Actions',
       key: 'actions',
-      width: 200,
+      width: 150,
+      fixed: 'right' as const,
       render: (_: any, record: Category) => (
-        <Space>
-          <Tooltip title="View Details">
-            <Button
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => handleModalOpen(record)}
-            />
-          </Tooltip>
-          
+        <Space size="small">
           <Tooltip title="Edit">
             <Button
               size="small"
@@ -439,7 +553,7 @@ const CategoryManagement: React.FC = () => {
             <Tooltip title="Restore">
               <Button
                 size="small"
-                icon={<RestoreOutlined />}
+                icon={<UndoOutlined />}
                 onClick={() => handleRestore(record)}
               />
             </Tooltip>
@@ -463,9 +577,11 @@ const CategoryManagement: React.FC = () => {
     }
   ];
 
+  // Debug logging
   useEffect(() => {
     if (categoriesData) {
       console.log('Categories data:', categoriesData);
+      console.log('Sample category with image:', categories.find(c => c.image));
     }
   }, [categoriesData]);
 
@@ -496,7 +612,7 @@ const CategoryManagement: React.FC = () => {
 
       <Table
         columns={columns}
-        dataSource={flatCategories}
+        dataSource={filteredCategories}
         loading={isLoading}
         rowKey="_id"
         pagination={{
@@ -507,6 +623,7 @@ const CategoryManagement: React.FC = () => {
             `${range[0]}-${range[1]} of ${total} categories`
         }}
         scroll={{ x: 1200 }}
+        size="small"
       />
 
       <Modal
@@ -546,10 +663,12 @@ const CategoryManagement: React.FC = () => {
               label="Parent Category"
             >
               <TreeSelect
-                treeData={buildTreeSelectData(treeCategories)}
+                treeData={buildTreeSelectData(treeCategories, editingCategory?._id)}
                 placeholder="Select parent category"
                 allowClear
                 treeDefaultExpandAll
+                showSearch
+                treeNodeFilterProp="title"
               />
             </Form.Item>
           </div>
@@ -605,11 +724,24 @@ const CategoryManagement: React.FC = () => {
             <Upload {...uploadProps}>
               {fileList.length === 0 && (
                 <div>
-                  <UploadOutlined />
+                  <PlusOutlined />
                   <div style={{ marginTop: 8 }}>Upload Image</div>
                 </div>
               )}
             </Upload>
+            <div className="mt-2 text-xs text-gray-500">
+              Supported formats: JPG, PNG, GIF. Max size: 5MB
+            </div>
+            {editingCategory?.image && fileList.length === 0 && (
+              <div className="mt-2">
+                <Form.Item name="removeImage" valuePropName="checked">
+                  <Switch 
+                    checkedChildren="Remove current image" 
+                    unCheckedChildren="Keep current image" 
+                  />
+                </Form.Item>
+              </div>
+            )}
           </Form.Item>
 
           <div className="border-t pt-4 mt-4">
@@ -657,6 +789,16 @@ const CategoryManagement: React.FC = () => {
             </Space>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Image Preview Modal */}
+      <Modal
+        open={previewVisible}
+        title="Image Preview"
+        footer={null}
+        onCancel={() => setPreviewVisible(false)}
+      >
+        <img alt="preview" style={{ width: '100%' }} src={previewImage} />
       </Modal>
     </div>
   );
