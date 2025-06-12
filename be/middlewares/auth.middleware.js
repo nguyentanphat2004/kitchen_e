@@ -1,21 +1,102 @@
-// middlewares/auth.middleware.js
+// middlewares/auth.middleware.js - FIXED VERSION
 const passport = require('passport');
 const ApiError = require('../utils/apiError');
+const rateLimit = require('express-rate-limit');
+
+// 🔧 FIX 1: Rate limiting cho auth endpoints
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit each IP to 5 requests per windowMs
+  message: {
+    success: false,
+    error: {
+      message: 'Quá nhiều lần thử đăng nhập. Vui lòng thử lại sau 15 phút.',
+      statusCode: 429
+    }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // 🔧 Skip rate limiting for successful requests
+  skipSuccessfulRequests: true,
+  // 🔧 Custom key generator (có thể dùng user ID thay vì IP)
+  keyGenerator: (req) => {
+    return req.ip || req.connection.remoteAddress;
+  }
+});
 
 /**
- * Middleware bảo vệ route - yêu cầu người dùng đã đăng nhập
+ * 🔧 FIX 2: Improved protect middleware với detailed logging
  */
 exports.protect = (req, res, next) => {
   passport.authenticate('jwt', { session: false }, (err, user, info) => {
+    // 🔧 Log authentication attempts
+    const clientIP = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    
     if (err) {
+      console.error('❌ Auth Error:', {
+        error: err.message,
+        ip: clientIP,
+        userAgent: userAgent,
+        url: req.originalUrl,
+        timestamp: new Date().toISOString()
+      });
       return next(new ApiError('Lỗi xác thực', 500));
     }
     
     if (!user) {
+      // 🔧 Log failed authentication attempts
+      console.warn('🚫 Authentication Failed:', {
+        reason: info?.message || 'Token invalid',
+        ip: clientIP,
+        userAgent: userAgent,
+        url: req.originalUrl,
+        timestamp: new Date().toISOString()
+      });
+      
       return next(
         new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401)
       );
     }
+    
+    // 🔧 FIX 3: Additional security checks
+    
+    // ✅ Check if account is locked
+    if (user.isLocked && user.lockUntil && user.lockUntil > Date.now()) {
+      console.warn('🔒 Account Locked:', {
+        userId: user._id,
+        lockUntil: user.lockUntil,
+        ip: clientIP,
+        timestamp: new Date().toISOString()
+      });
+      return next(new ApiError('Tài khoản đã bị khóa tạm thời', 423));
+    }
+    
+    // ✅ Check for suspicious activity (optional)
+    if (shouldCheckSuspiciousActivity(req, user)) {
+      console.warn('⚠️ Suspicious Activity:', {
+        userId: user._id,
+        ip: clientIP,
+        userAgent: userAgent,
+        timestamp: new Date().toISOString()
+      });
+      // Could implement additional verification here
+    }
+    
+    // 🔧 Log successful authentication
+    console.log('✅ Authentication Success:', {
+      userId: user._id,
+      username: user.username,
+      ip: clientIP,
+      url: req.originalUrl,
+      timestamp: new Date().toISOString()
+    });
+    
+    // ✅ Set last activity
+    user.lastActivity = new Date();
+    user.save({ validateBeforeSave: false }).catch(err => {
+      console.error('Failed to update last activity:', err);
+    });
     
     // Gán thông tin người dùng vào request
     req.user = user;
@@ -24,52 +105,96 @@ exports.protect = (req, res, next) => {
 };
 
 /**
- * Middleware xác thực không bắt buộc - nếu có token thì xác thực, không có thì vẫn cho phép tiếp tục
+ * 🔧 FIX 4: Enhanced optional auth middleware
  */
 exports.optionalAuth = (req, res, next) => {
   passport.authenticate('jwt', { session: false }, (err, user) => {
+    if (err) {
+      console.error('Optional auth error:', err);
+    }
+    
     if (user) {
-      req.user = user;
+      // ✅ Basic checks for optional auth
+      if (!user.isDeleted && (!user.isLocked || !user.lockUntil || user.lockUntil <= Date.now())) {
+        req.user = user;
+        
+        // Update last activity for authenticated users
+        user.lastActivity = new Date();
+        user.save({ validateBeforeSave: false }).catch(err => {
+          console.error('Failed to update last activity:', err);
+        });
+      }
     }
     next();
   })(req, res, next);
 };
 
 /**
- * Middleware giới hạn vai trò truy cập - chỉ cho phép những vai trò cụ thể
+ * 🔧 FIX 5: Enhanced role authorization với better logging
  */
 exports.authorize = (...roles) => {
-  
   return (req, res, next) => {
     console.log('=== AUTHORIZE DEBUG ===');
     console.log('Required roles:', roles);
-    console.log('User object:', req.user);
+    console.log('User object:', req.user ? { id: req.user._id, role: req.user.role } : null);
     console.log('User role:', req.user?.role);
     console.log('User role type:', typeof req.user?.role);
     console.log('Roles includes check:', roles.includes(req.user?.role));
+    
     if (!req.user) {
+      console.warn('🚫 Authorization Failed - No User:', {
+        url: req.originalUrl,
+        ip: req.ip,
+        timestamp: new Date().toISOString()
+      });
       return next(
         new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401)
       );
     }
     
     if (!roles.includes(req.user.role)) {
+      console.warn('🚫 Authorization Failed - Insufficient Role:', {
+        userId: req.user._id,
+        userRole: req.user.role,
+        requiredRoles: roles,
+        url: req.originalUrl,
+        ip: req.ip,
+        timestamp: new Date().toISOString()
+      });
       return next(
         new ApiError('Bạn không có quyền truy cập tính năng này', 403)
       );
     }
+    
+    console.log('✅ Authorization Success:', {
+      userId: req.user._id,
+      userRole: req.user.role,
+      url: req.originalUrl,
+      timestamp: new Date().toISOString()
+    });
     
     next();
   };
 };
 
 /**
- * Xác thực tài khoản chính chủ hoặc admin
+ * 🔧 FIX 6: Enhanced owner or admin authorization
  */
 exports.authorizeOwnerOrAdmin = (paramName = 'userId') => {
   return (req, res, next) => {
+    if (!req.user) {
+      return next(
+        new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401)
+      );
+    }
+    
     // Admin có toàn quyền truy cập
     if (req.user.role === 'admin') {
+      console.log('✅ Admin Access Granted:', {
+        adminId: req.user._id,
+        url: req.originalUrl,
+        timestamp: new Date().toISOString()
+      });
       return next();
     }
     
@@ -77,11 +202,96 @@ exports.authorizeOwnerOrAdmin = (paramName = 'userId') => {
     const resourceUserId = req.params[paramName];
     
     if (resourceUserId && resourceUserId !== req.user.id) {
+      console.warn('🚫 Resource Access Denied:', {
+        userId: req.user._id,
+        attemptedResource: resourceUserId,
+        url: req.originalUrl,
+        timestamp: new Date().toISOString()
+      });
       return next(
         new ApiError('Bạn không có quyền truy cập tài nguyên này', 403)
       );
     }
     
+    console.log('✅ Owner Access Granted:', {
+      userId: req.user._id,
+      resource: resourceUserId,
+      url: req.originalUrl,
+      timestamp: new Date().toISOString()
+    });
+    
     next();
   };
 };
+
+/**
+ * 🔧 NEW: Email verification required middleware
+ */
+exports.requireEmailVerification = (req, res, next) => {
+  if (!req.user) {
+    return next(new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401));
+  }
+  
+  if (!req.user.isEmailVerified) {
+    return next(new ApiError('Bạn cần xác thực email để sử dụng tính năng này', 403));
+  }
+  
+  next();
+};
+
+/**
+ * 🔧 NEW: Account status check middleware
+ */
+exports.checkAccountStatus = (req, res, next) => {
+  if (!req.user) {
+    return next(new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401));
+  }
+  
+  // Check if account is deleted
+  if (req.user.isDeleted) {
+    return next(new ApiError('Tài khoản đã bị xóa', 410));
+  }
+  
+  // Check if account is locked
+  if (req.user.isLocked && req.user.lockUntil && req.user.lockUntil > Date.now()) {
+    const unlockTime = new Date(req.user.lockUntil).toLocaleString('vi-VN');
+    return next(new ApiError(`Tài khoản bị khóa đến ${unlockTime}`, 423));
+  }
+  
+  next();
+};
+
+/**
+ * 🔧 Helper function: Check for suspicious activity
+ */
+function shouldCheckSuspiciousActivity(req, user) {
+  // Simple suspicious activity detection
+  const clientIP = req.ip || req.connection.remoteAddress;
+  const userAgent = req.get('User-Agent');
+  
+  // Check if IP has changed dramatically from last login
+  if (user.lastLoginIP && user.lastLoginIP !== clientIP) {
+    // Could implement geo-IP checking here
+    return true;
+  }
+  
+  // Check for unusual user agent patterns
+  if (userAgent && (
+    userAgent.includes('curl') || 
+    userAgent.includes('wget') || 
+    userAgent.includes('bot')
+  )) {
+    return true;
+  }
+  
+  return false;
+}
+
+// 🔧 Export rate limiting
+exports.authRateLimit = authRateLimit;
+
+// 🔧 NEW: Create combined middleware for common auth patterns
+exports.protectWithRateLimit = [authRateLimit, exports.protect];
+exports.adminOnly = [exports.protect, exports.authorize('admin')];
+exports.staffOrAdmin = [exports.protect, exports.authorize('staff', 'admin')];
+exports.verifiedUsersOnly = [exports.protect, exports.requireEmailVerification];

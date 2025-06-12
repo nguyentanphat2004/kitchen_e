@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const categoryController = require('../../controllers/category.controller');
 const { protect, authorize, optionalAuth } = require('../../middlewares/auth.middleware');
-const { uploadSingle } = require('../../middlewares/upload.middleware');
+const { uploadCategoryImage } = require('../../middlewares/upload.middleware');
 
 // Public category routes
 router.get('/', categoryController.getCategories);
@@ -11,12 +11,12 @@ router.get('/featured', categoryController.getFeaturedCategories);
 router.get('/:id', categoryController.getCategory);
 router.get('/:id/products', categoryController.getCategoryProducts);
 
-// Admin/Staff category routes
+// Admin/Staff category routes with image upload
 router.post(
   '/',
   protect,
   authorize('admin', 'staff'),
-  uploadSingle('image'),
+  uploadCategoryImage, // This uses the uploadSingle('image') middleware
   categoryController.createCategory
 );
 
@@ -24,7 +24,7 @@ router.put(
   '/:id',
   protect,
   authorize('admin', 'staff'),
-  uploadSingle('image'),
+  uploadCategoryImage, // This uses the uploadSingle('image') middleware
   categoryController.updateCategory
 );
 

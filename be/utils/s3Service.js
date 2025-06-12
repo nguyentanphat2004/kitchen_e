@@ -1,214 +1,229 @@
-// utils/s3Service.js
-const {
-    S3Client,
-    PutObjectCommand,
-    GetObjectCommand,
-    DeleteObjectCommand,
-    ListObjectsV2Command,
-    CopyObjectCommand
-  } = require('@aws-sdk/client-s3');
-  const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-  const { Readable } = require('stream');
-  
-  // Khởi tạo S3 client
-  const s3 = new S3Client({
-    region: process.env.AWS_REGION,
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-    }
-  });
-  
+// utils/imageService.js
+const { deleteFile, getFileUrl } = require('../middlewares/upload.middleware');
+const sharp = require('sharp'); // Optional: npm install sharp for image processing
+
+/**
+ * Image service that works with existing upload middleware
+ */
+const imageService = {
   /**
-   * Service riêng xử lý các thao tác với AWS S3
+   * Process uploaded image from multer
+   * @param {Object} file - Multer file object (from req.file)
+   * @param {String} folder - Folder name (already handled by upload middleware)
+   * @param {Object} options - Processing options
+   * @returns {Promise<Object>} - Processed image info
    */
-  const s3Service = {
-    /**
-     * Upload file lên S3
-     * @param {Buffer|Stream} fileData - Dữ liệu file
-     * @param {String} key - Đường dẫn và tên file trên S3
-     * @param {String} contentType - MIME type của file
-     * @returns {Promise<Object>} - Thông tin file đã upload
-     */
-    async uploadFile(fileData, key, contentType) {
-      try {
-        const uploadParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Key: key,
-          Body: fileData,
-          ContentType: contentType || 'application/octet-stream'
-        };
-        
-        const result = await s3.send(new PutObjectCommand(uploadParams));
-        
-        return {
-          key,
-          url: `https://${process.env.AWS_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
-          etag: result.ETag,
-          contentType
-        };
-      } catch (error) {
-        throw new Error(`Lỗi khi upload file lên S3: ${error.message}`);
+  async uploadImage(file, folder = 'categories', options = {}) {
+    try {
+      if (!file) {
+        throw new Error('No file provided');
       }
-    },
-    
-    /**
-     * Download file từ S3
-     * @param {String} key - Đường dẫn file trên S3
-     * @returns {Promise<Buffer>} - Dữ liệu file
-     */
-    async downloadFile(key) {
-      try {
-        const getParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Key: key
-        };
-        
-        const { Body, ContentType } = await s3.send(new GetObjectCommand(getParams));
-        
-        // Chuyển đổi stream thành buffer
-        const chunks = [];
-        
-        if (Body instanceof Readable) {
-          for await (const chunk of Body) {
-            chunks.push(chunk);
-          }
-        }
-        
-        return {
-          data: Buffer.concat(chunks),
-          contentType: ContentType
-        };
-      } catch (error) {
-        throw new Error(`Lỗi khi download file từ S3: ${error.message}`);
-      }
-    },
-    
-    /**
-     * Xóa file trên S3
-     * @param {String} key - Đường dẫn file cần xóa
-     * @returns {Promise<Boolean>} - Kết quả xóa
-     */
-    async deleteFile(key) {
-      try {
-        if (!key) return false;
-        
-        const deleteParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Key: key
-        };
-        
-        await s3.send(new DeleteObjectCommand(deleteParams));
-        return true;
-      } catch (error) {
-        console.error(`Lỗi khi xóa file ${key} từ S3:`, error);
-        return false;
-      }
-    },
-    
-    /**
-     * Liệt kê files trong một thư mục trên S3
-     * @param {String} prefix - Tiền tố đường dẫn (thư mục)
-     * @param {Number} maxKeys - Số lượng kết quả tối đa
-     * @returns {Promise<Array>} - Danh sách files
-     */
-    async listFiles(prefix = '', maxKeys = 1000) {
-      try {
-        const listParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Prefix: prefix,
-          MaxKeys: maxKeys
-        };
-        
-        const result = await s3.send(new ListObjectsV2Command(listParams));
-        
-        if (!result.Contents) {
-          return [];
-        }
-        
-        return result.Contents.map(item => ({
-          key: item.Key,
-          size: item.Size,
-          lastModified: item.LastModified,
-          url: `https://${process.env.AWS_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`
-        }));
-      } catch (error) {
-        throw new Error(`Lỗi khi liệt kê files từ S3: ${error.message}`);
-      }
-    },
-    
-    /**
-     * Di chuyển/đổi tên file trên S3
-     * @param {String} sourceKey - Đường dẫn file nguồn
-     * @param {String} destinationKey - Đường dẫn file đích
-     * @returns {Promise<Object>} - Thông tin file sau khi di chuyển
-     */
-    async moveFile(sourceKey, destinationKey) {
-      try {
-        // Copy file đến vị trí mới
-        const copyParams = {
-          Bucket: process.env.AWS_BUCKET,
-          CopySource: `${process.env.AWS_BUCKET}/${sourceKey}`,
-          Key: destinationKey
-        };
-        
-        await s3.send(new CopyObjectCommand(copyParams));
-        
-        // Xóa file nguồn
-        await this.deleteFile(sourceKey);
-        
-        return {
-          key: destinationKey,
-          url: `https://${process.env.AWS_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${destinationKey}`
-        };
-      } catch (error) {
-        throw new Error(`Lỗi khi di chuyển file trên S3: ${error.message}`);
-      }
-    },
-    
-    /**
-     * Tạo URL ký tên tạm thời
-     * @param {String} key - Đường dẫn file
-     * @param {Number} expiresIn - Thời gian hết hạn (giây)
-     * @returns {Promise<String>} - URL ký tên tạm thời
-     */
-    async getSignedUrl(key, expiresIn = 3600) {
-      try {
-        const getParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Key: key
-        };
-        
-        const command = new GetObjectCommand(getParams);
-        const signedUrl = await getSignedUrl(s3, command, { expiresIn });
-        
-        return signedUrl;
-      } catch (error) {
-        throw new Error(`Lỗi khi tạo URL ký tên: ${error.message}`);
-      }
-    },
-    
-    /**
-     * Kiểm tra xem file có tồn tại trên S3 không
-     * @param {String} key - Đường dẫn file
-     * @returns {Promise<Boolean>} - File có tồn tại không
-     */
-    async fileExists(key) {
-      try {
-        const getParams = {
-          Bucket: process.env.AWS_BUCKET,
-          Key: key
-        };
-        
-        await s3.send(new GetObjectCommand(getParams));
-        return true;
-      } catch (error) {
-        if (error.name === 'NoSuchKey') {
-          return false;
-        }
-        throw error;
-      }
+
+      // File đã được upload bởi multer middleware
+      // Chỉ cần xử lý thông tin file và trả về kết quả
+      
+      const result = {
+        url: this.getImageUrl(file),
+        path: this.getImagePath(file),
+        originalName: file.originalname,
+        size: file.size,
+        contentType: file.mimetype
+      };
+
+      console.log('Image upload result:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('Image service error:', error);
+      throw new Error(`Image upload failed: ${error.message}`);
     }
-  };
-  
-  module.exports = s3Service;
+  },
+
+  /**
+   * Get image URL from uploaded file
+   * @param {Object} file - Multer file object
+   * @returns {String} - Image URL
+   */
+  getImageUrl(file) {
+    if (!file) return null;
+
+    // Nếu dùng S3, file.location sẽ có URL đầy đủ
+    if (file.location) {
+      return file.location;
+    }
+
+    // Nếu dùng local storage, sử dụng getFileUrl từ upload middleware
+    if (file.path) {
+      return getFileUrl(file.path);
+    }
+
+    // Fallback: tạo URL từ filename
+    if (file.filename) {
+      return getFileUrl(file.filename);
+    }
+
+    return null;
+  },
+
+  /**
+   * Get image storage path from uploaded file
+   * @param {Object} file - Multer file object  
+   * @returns {String} - Storage path/key
+   */
+  getImagePath(file) {
+    if (!file) return null;
+
+    // Cho S3: sử dụng key
+    if (file.key) {
+      return file.key;
+    }
+
+    // Cho local storage: sử dụng path hoặc filename
+    if (file.path) {
+      return file.path;
+    }
+
+    if (file.filename) {
+      return file.filename;
+    }
+
+    return null;
+  },
+
+  /**
+   * Delete image using existing deleteFile function
+   * @param {String} imagePath - Image path/URL to delete
+   * @returns {Promise<Boolean>} - Success status
+   */
+  async deleteImage(imagePath) {
+    try {
+      if (!imagePath) return true;
+
+      await deleteFile(imagePath);
+      return true;
+    } catch (error) {
+      console.error('Delete image error:', error);
+      return false;
+    }
+  },
+
+  /**
+   * Validate uploaded image file
+   * @param {Object} file - Multer file object
+   * @returns {Object} - Validation result
+   */
+  validateImage(file) {
+    const errors = [];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    const maxSize = 10 * 1024 * 1024; // 10MB
+
+    if (!file) {
+      errors.push('No file provided');
+      return { isValid: false, errors };
+    }
+
+    if (!allowedTypes.includes(file.mimetype)) {
+      errors.push('Invalid file type. Only JPEG, PNG, WebP and GIF are allowed');
+    }
+
+    if (file.size > maxSize) {
+      errors.push('File size too large. Maximum size is 10MB');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      fileInfo: {
+        originalName: file.originalname,
+        size: file.size,
+        type: file.mimetype
+      }
+    };
+  },
+
+  /**
+   * Process image with Sharp (optional enhancement)
+   * @param {Buffer} buffer - Image buffer
+   * @param {Object} options - Processing options
+   * @returns {Promise<Buffer>} - Processed image buffer
+   */
+  async processImage(buffer, options = {}) {
+    try {
+      // Chỉ xử lý nếu Sharp có sẵn
+      if (!sharp) {
+        console.log('Sharp not available, returning original buffer');
+        return buffer;
+      }
+
+      const {
+        width = 800,
+        height = 600,
+        quality = 85,
+        format = 'jpeg'
+      } = options;
+
+      const processedBuffer = await sharp(buffer)
+        .resize(width, height, {
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({ quality })
+        .toBuffer();
+
+      return processedBuffer;
+    } catch (error) {
+      console.error('Image processing error:', error);
+      return buffer; // Return original if processing fails
+    }
+  },
+
+  /**
+   * Get full image URL for display
+   * @param {String} imagePath - Image path from database
+   * @returns {String} - Full image URL
+   */
+  getDisplayUrl(imagePath) {
+    if (!imagePath) return null;
+
+    // Nếu đã là URL đầy đủ, return luôn
+    if (imagePath.startsWith('http')) {
+      return imagePath;
+    }
+
+    // Sử dụng getFileUrl từ upload middleware
+    return getFileUrl(imagePath);
+  },
+
+  /**
+   * Create thumbnail from uploaded image (optional)
+   * @param {Object} file - Original uploaded file
+   * @param {Number} size - Thumbnail size
+   * @returns {Promise<String>} - Thumbnail URL
+   */
+  async createThumbnail(file, size = 150) {
+    try {
+      if (!sharp || !file.buffer) {
+        return this.getImageUrl(file); // Return original if can't process
+      }
+
+      // Create thumbnail buffer
+      const thumbnailBuffer = await sharp(file.buffer)
+        .resize(size, size, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      // Here you could save the thumbnail separately if needed
+      // For now, just return the original URL
+      return this.getImageUrl(file);
+      
+    } catch (error) {
+      console.error('Thumbnail creation error:', error);
+      return this.getImageUrl(file);
+    }
+  }
+};
+
+module.exports = imageService;

@@ -160,6 +160,19 @@ exports.getCategory = asyncHandler(async (req, res) => {
  * @access  Private (Admin, Staff)
  */
 exports.createCategory = asyncHandler(async (req, res) => {
+  console.log('Create category - received data:', {
+    body: req.body,
+    file: req.file ? {
+      fieldname: req.file.fieldname,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      key: req.file.key,
+      location: req.file.location,
+      path: req.file.path
+    } : null
+  });
+
   const {
     name,
     description,
@@ -185,7 +198,7 @@ exports.createCategory = asyncHandler(async (req, res) => {
   const categoryData = {
     name,
     description: description || '',
-    parentId: parentId === 'null' ? null : parentId,
+    parentId: parentId === 'null' || parentId === '' ? null : parentId,
     displayOrder: displayOrder ? parseInt(displayOrder, 10) : 0,
     featured: featured === 'true' || featured === true,
     showInMenu: showInMenu !== 'false' && showInMenu !== false,
@@ -198,21 +211,52 @@ exports.createCategory = asyncHandler(async (req, res) => {
     ...otherFields
   };
   
-  // Upload image if provided
+  // Handle image upload if provided
   if (req.file) {
     try {
+      console.log('Processing uploaded image...');
+      
+      // Validate image
+      const validation = imageService.validateImage(req.file);
+      if (!validation.isValid) {
+        throw new ApiError(`Image validation failed: ${validation.errors.join(', ')}`, 400);
+      }
+
+      // Process image and get URLs
       const result = await imageService.uploadImage(req.file, 'categories');
+      
       categoryData.image = result.url;
       categoryData.imagePath = result.path;
+      
+      console.log('Image processed successfully:', {
+        url: result.url,
+        path: result.path
+      });
+      
     } catch (error) {
+      console.error('Image upload error:', error);
       throw new ApiError(`Image upload failed: ${error.message}`, 500);
     }
   }
   
-  // Create the category
-  const category = await Category.create(categoryData);
-  
-  return ApiResponse.created(res, { category });
+  try {
+    // Create the category
+    const category = await Category.create(categoryData);
+    
+    console.log('Category created successfully:', {
+      id: category._id,
+      name: category.name,
+      image: category.image
+    });
+    
+    return ApiResponse.created(res, { category });
+  } catch (error) {
+    // If category creation fails and we uploaded an image, clean it up
+    if (req.file && categoryData.imagePath) {
+      await imageService.deleteImage(categoryData.imagePath);
+    }
+    throw error;
+  }
 });
 
 /**
@@ -222,6 +266,21 @@ exports.createCategory = asyncHandler(async (req, res) => {
  */
 exports.updateCategory = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  
+  console.log('Update category - received data:', {
+    id,
+    body: req.body,
+    file: req.file ? {
+      fieldname: req.file.fieldname,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      key: req.file.key,
+      location: req.file.location,
+      path: req.file.path
+    } : null
+  });
+
   const {
     name,
     description,
@@ -246,7 +305,7 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   }
   
   // Check for parent-child circular reference
-  if (parentId && parentId !== 'null' && parentId !== null) {
+  if (parentId && parentId !== 'null' && parentId !== null && parentId !== '') {
     // Ensure the parent category exists
     const parentCategory = await Category.findById(parentId);
     if (!parentCategory || parentCategory.isDeleted) {
@@ -271,11 +330,14 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   // Update fields if provided
   if (name) updateData.name = name;
   if (description !== undefined) updateData.description = description;
-  if (parentId === 'null' || parentId === '') {
+  
+  // Handle parentId
+  if (parentId === 'null' || parentId === '' || parentId === null) {
     updateData.parentId = null;
   } else if (parentId) {
     updateData.parentId = parentId;
   }
+  
   if (displayOrder !== undefined) updateData.displayOrder = parseInt(displayOrder, 10);
   if (featured !== undefined) updateData.featured = featured === 'true' || featured === true;
   if (showInMenu !== undefined) updateData.showInMenu = showInMenu === 'true' || showInMenu === true;
@@ -289,12 +351,17 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   // Add other fields
   Object.assign(updateData, otherFields);
   
+  // Store old image info for cleanup
+  const oldImagePath = category.imagePath || category.image;
+  
   // Handle image removal if specified
-  if (removeImage === 'true' && category.image) {
+  if (removeImage === 'true' && oldImagePath) {
     try {
-      await imageService.deleteImage(category.imagePath || category.image);
+      console.log('Removing current image:', oldImagePath);
+      await imageService.deleteImage(oldImagePath);
       updateData.image = null;
       updateData.imagePath = null;
+      console.log('Current image removed successfully');
     } catch (error) {
       console.error(`Failed to delete image: ${error.message}`);
       // Continue even if image deletion fails
@@ -304,28 +371,64 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   // Handle new image upload
   if (req.file) {
     try {
-      // Delete old image if exists
-      if (category.image) {
-        await imageService.deleteImage(category.imagePath || category.image);
-      }
+      console.log('Processing new uploaded image...');
       
-      // Upload new image
+      // Validate new image
+      const validation = imageService.validateImage(req.file);
+      if (!validation.isValid) {
+        throw new ApiError(`Image validation failed: ${validation.errors.join(', ')}`, 400);
+      }
+
+      // Process new image
       const result = await imageService.uploadImage(req.file, 'categories');
+      
       updateData.image = result.url;
       updateData.imagePath = result.path;
+      
+      console.log('New image processed successfully:', {
+        url: result.url,
+        path: result.path
+      });
+      
+      // Delete old image if exists and we're replacing it
+      if (oldImagePath && removeImage !== 'true') {
+        try {
+          await imageService.deleteImage(oldImagePath);
+          console.log('Old image deleted successfully');
+        } catch (error) {
+          console.error(`Failed to delete old image: ${error.message}`);
+          // Continue even if old image deletion fails
+        }
+      }
+      
     } catch (error) {
+      console.error('New image upload error:', error);
       throw new ApiError(`Image upload failed: ${error.message}`, 500);
     }
   }
   
-  // Update the category
-  const updatedCategory = await Category.findByIdAndUpdate(
-    id,
-    updateData,
-    { new: true, runValidators: true }
-  );
-  
-  return ApiResponse.success(res, { category: updatedCategory });
+  try {
+    // Update the category
+    const updatedCategory = await Category.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+    
+    console.log('Category updated successfully:', {
+      id: updatedCategory._id,
+      name: updatedCategory.name,
+      image: updatedCategory.image
+    });
+    
+    return ApiResponse.success(res, { category: updatedCategory });
+  } catch (error) {
+    // If update fails and we uploaded a new image, clean it up
+    if (req.file && updateData.imagePath) {
+      await imageService.deleteImage(updateData.imagePath);
+    }
+    throw error;
+  }
 });
 
 /**
@@ -524,7 +627,7 @@ exports.reorderCategories = asyncHandler(async (req, res) => {
   });
 });
 
-// Helper function to check if a category is a descendant of another
+
 async function isDescendantOf(categoryId, possibleParentId) {
   let current = await Category.findById(categoryId);
   

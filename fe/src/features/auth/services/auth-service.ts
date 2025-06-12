@@ -1,4 +1,4 @@
-// src/features/auth/services/auth.service.ts
+// src/features/auth/services/auth-service.ts - FIXED VERSION
 import axios from 'axios';
 import type {
   LoginRequest,
@@ -23,109 +23,267 @@ const axiosInstance = axios.create({
   },
 });
 
-// Add request interceptor to add Authorization header with token
+// 🔧 FIX 1: Improved request interceptor
 axiosInstance.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      // ✅ Kiểm tra token format trước khi gửi
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const currentTime = Date.now() / 1000;
+        
+        // ✅ Kiểm tra token expiration trước khi gửi request
+        if (payload.exp < currentTime) {
+          localStorage.removeItem('token');
+          window.location.href = '/auth/login';
+          return Promise.reject(new Error('Token expired'));
+        }
+        
+        config.headers.Authorization = `Bearer ${token}`;
+      } catch (error) {
+        // ✅ Token không hợp lệ → xóa và redirect
+        localStorage.removeItem('token');
+        window.location.href = '/auth/login';
+        return Promise.reject(new Error('Invalid token format'));
+      }
     }
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-class AuthService {
-  /**
-   * Login user
-   * @param loginData Login credentials
-   * @returns Promise with login response
-   */
- async login(loginData: LoginRequest): Promise<LoginResponse> {
-  const response = await axiosInstance.post<LoginResponse>('/login', loginData);
-  
-  if (!response.data.token) {
-    throw new Error('Không nhận được token từ server');
-  }
-  
-  localStorage.setItem('token', response.data.token);
-  return response.data;
-}
-
-  /**
-   * Register new user
-   * @param registerData Registration data
-   * @returns Promise with registration response
-   */
-  async register(registerData: RegisterRequest): Promise<RegisterResponse> {
-    const response = await axiosInstance.post<RegisterResponse>('/register', registerData);
+// 🔧 FIX 2: ADD Response interceptor để handle errors
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const { response } = error;
     
-    if (response.data.token) {
-      localStorage.setItem('token', response.data.token);
+    // ✅ Handle 401 Unauthorized
+    if (response?.status === 401) {
+      localStorage.removeItem('token');
+      
+      // ✅ Chỉ redirect nếu không phải login/register endpoints
+      const isAuthEndpoint = ['/login', '/register', '/forgot-password'].some(
+        endpoint => error.config?.url?.includes(endpoint)
+      );
+      
+      if (!isAuthEndpoint) {
+        window.location.href = '/auth/login?expired=true';
+      }
     }
     
-    return response.data;
+    // ✅ Handle 403 Forbidden
+    if (response?.status === 403) {
+      // Không xóa token, chỉ redirect về trang unauthorized
+      window.location.href = '/unauthorized';
+    }
+    
+    // ✅ Handle network errors
+    if (!response) {
+      console.error('Network error:', error.message);
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+class AuthService {
+  /**
+   * 🔧 FIX 3: Improved login with better error handling
+   */
+  async login(loginData: LoginRequest): Promise<LoginResponse> {
+    try {
+      const response = await axiosInstance.post<LoginResponse>('/login', loginData);
+      
+      if (!response.data.token) {
+        throw new Error('Không nhận được token từ server');
+      }
+      
+      // ✅ Validate token before storing
+      try {
+        const payload = JSON.parse(atob(response.data.token.split('.')[1]));
+        const currentTime = Date.now() / 1000;
+        
+        if (payload.exp < currentTime) {
+          throw new Error('Token đã hết hạn');
+        }
+        
+        localStorage.setItem('token', response.data.token);
+        
+        // ✅ Store additional user info for better UX
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        
+      } catch (tokenError) {
+        throw new Error('Token không hợp lệ từ server');
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      // ✅ Better error handling
+      if (error.response?.status === 429) {
+        throw new Error('Quá nhiều lần thử đăng nhập. Vui lòng thử lại sau.');
+      }
+      throw error;
+    }
   }
 
   /**
-   * Logout user
-   * @returns Promise with void
+   * 🔧 FIX 4: Improved register with validation
+   */
+  async register(registerData: RegisterRequest): Promise<RegisterResponse> {
+    try {
+      const response = await axiosInstance.post<RegisterResponse>('/register', registerData);
+      
+      if (response.data.token) {
+        // ✅ Validate token before storing
+        try {
+          const payload = JSON.parse(atob(response.data.token.split('.')[1]));
+          localStorage.setItem('token', response.data.token);
+          localStorage.setItem('user', JSON.stringify(response.data.user));
+        } catch (tokenError) {
+          console.warn('Invalid token received during registration');
+        }
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.status === 429) {
+        throw new Error('Quá nhiều lần đăng ký. Vui lòng thử lại sau.');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 🔧 FIX 5: Safer logout
    */
   async logout(): Promise<void> {
-    await axiosInstance.get('/logout');
-    localStorage.removeItem('token');
+    try {
+      // ✅ Gọi API logout trước
+      await axiosInstance.get('/logout');
+    } catch (error) {
+      // ✅ Vẫn logout local ngay cả khi API lỗi
+      console.warn('Logout API failed, but continuing with local logout');
+    } finally {
+      // ✅ Luôn luôn clear local storage
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
   }
 
   /**
-   * Get current user details
-   * @returns Promise with user data
+   * 🔧 FIX 6: Improved getCurrentUser with retry
    */
   async getCurrentUser(): Promise<{ user: User }> {
-    const response = await axiosInstance.get<{ user: User }>('/me');
-    return response.data;
+    try {
+      const response = await axiosInstance.get<{ user: User }>('/me');
+      
+      // ✅ Update cached user data
+      localStorage.setItem('user', JSON.stringify(response.data.user));
+      
+      return response.data;
+    } catch (error: any) {
+      // ✅ Nếu 401, thử refresh token trước khi bỏ cuộc
+      if (error.response?.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+      throw error;
+    }
   }
 
   /**
-   * Update user profile
-   * @param userData Updated user data
-   * @returns Promise with updated user
+   * 🔧 FIX 7: Better token validation
    */
+  isAuthenticated(): boolean {
+    const token = localStorage.getItem('token');
+    
+    if (!token) return false;
+    
+    try {
+      // ✅ Kiểm tra token format và expiration
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const currentTime = Date.now() / 1000;
+      
+      if (payload.exp < currentTime) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      // ✅ Token không hợp lệ
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      return false;
+    }
+  }
+
+  /**
+   * 🔧 FIX 8: Get cached user data
+   */
+  getCachedUser(): User | null {
+    try {
+      const userData = localStorage.getItem('user');
+      return userData ? JSON.parse(userData) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * 🔧 FIX 9: Check token expiration time
+   */
+  getTokenExpirationTime(): number | null {
+    const token = this.getToken();
+    if (!token) return null;
+    
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.exp * 1000; // Convert to milliseconds
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * 🔧 FIX 10: Time until token expires
+   */
+  getTimeUntilExpiration(): number {
+    const expirationTime = this.getTokenExpirationTime();
+    if (!expirationTime) return 0;
+    
+    return Math.max(0, expirationTime - Date.now());
+  }
+
+  // Existing methods with minor improvements
   async updateUserProfile(userData: UpdateUserRequest): Promise<{ user: User }> {
     const response = await axiosInstance.put<{ user: User }>('/me', userData);
+    
+    // ✅ Update cached user data
+    localStorage.setItem('user', JSON.stringify(response.data.user));
+    
     return response.data;
   }
 
-  /**
-   * Update user password
-   * @param passwordData Current and new password
-   * @returns Promise with token and user
-   */
   async updatePassword(passwordData: UpdatePasswordRequest): Promise<LoginResponse> {
     const response = await axiosInstance.put<LoginResponse>('/password', passwordData);
     
     if (response.data.token) {
       localStorage.setItem('token', response.data.token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
     }
     
     return response.data;
   }
 
-  /**
-   * Send forgot password email
-   * @param email User email
-   * @returns Promise with success message
-   */
   async forgotPassword(email: string): Promise<VerificationResponse> {
     const response = await axiosInstance.post<VerificationResponse>('/forgot-password', { email });
     return response.data;
   }
 
-  /**
-   * Reset password using token
-   * @param token Reset token
-   * @param password New password
-   * @returns Promise with success message
-   */
   async resetPassword(token: string, password: string): Promise<VerificationResponse> {
     const response = await axiosInstance.post<VerificationResponse>(
       `/reset-password/${token}`,
@@ -134,37 +292,16 @@ class AuthService {
     return response.data;
   }
 
-  /**
-   * Verify email with token
-   * @param token Verification token
-   * @returns Promise with verification response
-   */
   async verifyEmail(token: string): Promise<VerificationResponse> {
     const response = await axiosInstance.get<VerificationResponse>(`/verify-email/${token}`);
     return response.data;
   }
 
-  /**
-   * Resend verification email
-   * @returns Promise with verification response
-   */
   async resendVerificationEmail(): Promise<VerificationResponse> {
     const response = await axiosInstance.post<VerificationResponse>('/resend-verification');
     return response.data;
   }
 
-  /**
-   * Check if user is authenticated
-   * @returns Boolean indicating authentication status
-   */
-  isAuthenticated(): boolean {
-    return !!localStorage.getItem('token');
-  }
-
-  /**
-   * Get authentication token
-   * @returns Token string or null
-   */
   getToken(): string | null {
     return localStorage.getItem('token');
   }

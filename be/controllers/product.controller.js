@@ -239,6 +239,19 @@ exports.getProduct = asyncHandler(async (req, res) => {
  * @access  Private (Admin, Staff)
  */
 exports.createProduct = asyncHandler(async (req, res) => {
+  console.log('Create product - received data:', {
+    body: req.body,
+    files: req.files ? req.files.map(f => ({
+      fieldname: f.fieldname,
+      originalname: f.originalname,
+      mimetype: f.mimetype,
+      size: f.size,
+      key: f.key,
+      location: f.location,
+      path: f.path
+    })) : null
+  });
+
   const {
     name,
     description,
@@ -284,7 +297,7 @@ exports.createProduct = asyncHandler(async (req, res) => {
     categoryId,
     basePrice: Number(basePrice),
     sku,
-    stockQuantity: stockQuantity || 0,
+    stockQuantity: stockQuantity ? Number(stockQuantity) : 0,
     isCustomizable: isCustomizable === 'true' || isCustomizable === true,
     tags: processedTags || [],
     featured: featured === 'true' || featured === true,
@@ -293,7 +306,13 @@ exports.createProduct = asyncHandler(async (req, res) => {
 
   // Add dimensions if provided
   if (dimensions) {
-    productData.dimensions = dimensions;
+    try {
+      productData.dimensions = typeof dimensions === 'string' 
+        ? JSON.parse(dimensions) 
+        : dimensions;
+    } catch (error) {
+      throw new ApiError('Invalid dimensions format', 400);
+    }
   }
 
   // Add weight if provided
@@ -301,32 +320,75 @@ exports.createProduct = asyncHandler(async (req, res) => {
     productData.weight = Number(weight);
   }
 
-  // Upload images if provided
+  // Handle multiple image uploads
   if (req.files && req.files.length > 0) {
     const images = [];
     
-    for (const file of req.files) {
+    console.log(`Processing ${req.files.length} uploaded images...`);
+    
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      
       try {
-        // Sử dụng imageService mới để hỗ trợ cả local và S3
+        // Validate each image
+        const validation = imageService.validateImage(file);
+        if (!validation.isValid) {
+          throw new ApiError(`Image ${i + 1} validation failed: ${validation.errors.join(', ')}`, 400);
+        }
+
+        // Process image using imageService
         const result = await imageService.uploadImage(file, 'products');
+        
         images.push({
-          url: result.url, // URL đã được tạo tương ứng với loại storage (S3 hoặc local)
-          path: result.path, // Đường dẫn lưu trữ (key trong S3 hoặc đường dẫn local)
+          url: result.url,
+          path: result.path,
           altText: name,
-          isDefault: images.length === 0 // First image is default
+          isDefault: i === 0, // First image is default
+          sortOrder: i
         });
+        
+        console.log(`Image ${i + 1} processed successfully:`, {
+          url: result.url,
+          path: result.path
+        });
+        
       } catch (error) {
-        throw new ApiError(`Image upload failed: ${error.message}`, 500);
+        console.error(`Image ${i + 1} upload error:`, error);
+        
+        // Clean up previously uploaded images if any fail
+        for (const uploadedImage of images) {
+          await imageService.deleteImage(uploadedImage.path);
+        }
+        
+        throw new ApiError(`Image ${i + 1} upload failed: ${error.message}`, 500);
       }
     }
     
     productData.images = images;
+    console.log(`All ${images.length} images processed successfully`);
   }
 
-  // Create the product
-  const product = await Product.create(productData);
+  try {
+    // Create the product
+    const product = await Product.create(productData);
+    
+    console.log('Product created successfully:', {
+      id: product._id,
+      name: product.name,
+      imagesCount: product.images?.length || 0
+    });
 
-  return ApiResponse.created(res, { product });
+    return ApiResponse.created(res, { product });
+  } catch (error) {
+    // If product creation fails and we uploaded images, clean them up
+    if (productData.images && productData.images.length > 0) {
+      console.log('Cleaning up uploaded images due to product creation failure...');
+      for (const image of productData.images) {
+        await imageService.deleteImage(image.path);
+      }
+    }
+    throw error;
+  }
 });
 
 /**
@@ -336,6 +398,21 @@ exports.createProduct = asyncHandler(async (req, res) => {
  */
 exports.updateProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  
+  console.log('Update product - received data:', {
+    id,
+    body: req.body,
+    files: req.files ? req.files.map(f => ({
+      fieldname: f.fieldname,
+      originalname: f.originalname,
+      mimetype: f.mimetype,
+      size: f.size,
+      key: f.key,
+      location: f.location,
+      path: f.path
+    })) : null
+  });
+
   const {
     name,
     description,
@@ -381,32 +458,45 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   }
 
   // Create update object
-  const updateData = {
-    ...(name && { name }),
-    ...(description && { description }),
-    ...(categoryId && { categoryId }),
-    ...(basePrice && { basePrice: Number(basePrice) }),
-    ...(sku && { sku }),
-    ...(stockQuantity !== undefined && { stockQuantity: Number(stockQuantity) }),
-    ...(isCustomizable !== undefined && { 
-      isCustomizable: isCustomizable === 'true' || isCustomizable === true 
-    }),
-    ...(processedTags && { tags: processedTags }),
-    ...(featured !== undefined && { 
-      featured: featured === 'true' || featured === true 
-    }),
-    ...otherFields
-  };
+  const updateData = {};
+  
+  // Update fields if provided
+  if (name) updateData.name = name;
+  if (description) updateData.description = description;
+  if (categoryId) updateData.categoryId = categoryId;
+  if (basePrice) updateData.basePrice = Number(basePrice);
+  if (sku) updateData.sku = sku;
+  if (stockQuantity !== undefined) updateData.stockQuantity = Number(stockQuantity);
+  if (isCustomizable !== undefined) {
+    updateData.isCustomizable = isCustomizable === 'true' || isCustomizable === true;
+  }
+  if (processedTags) updateData.tags = processedTags;
+  if (featured !== undefined) {
+    updateData.featured = featured === 'true' || featured === true;
+  }
+  
+  // Add other fields
+  Object.assign(updateData, otherFields);
 
-  // Add dimensions if provided
+  // Handle dimensions if provided
   if (dimensions) {
-    updateData.dimensions = dimensions;
+    try {
+      updateData.dimensions = typeof dimensions === 'string' 
+        ? JSON.parse(dimensions) 
+        : dimensions;
+    } catch (error) {
+      throw new ApiError('Invalid dimensions format', 400);
+    }
   }
 
-  // Add weight if provided
+  // Handle weight if provided
   if (weight) {
     updateData.weight = Number(weight);
   }
+
+  // Store current images for potential cleanup
+  const currentImages = product.images || [];
+  let imagesToDelete = [];
 
   // Handle image removal if specified
   if (removeImages) {
@@ -414,60 +504,118 @@ exports.updateProduct = asyncHandler(async (req, res) => {
       ? removeImages 
       : [removeImages];
     
-    // Delete images from storage (works with both S3 and local)
-    for (const image of product.images) {
-      if (imagesToRemove.includes(image.url)) {
-        try {
-          // Sử dụng imageService mới để xóa hình ảnh
-          await imageService.deleteImage(image.path || image.url);
-        } catch (error) {
-          console.error(`Failed to delete image ${image.url}: ${error.message}`);
-          // Continue with other images even if one fails
-        }
-      }
-    }
+    console.log('Removing images:', imagesToRemove);
     
-    // Update the images array
-    updateData.images = product.images.filter(
-      image => !imagesToRemove.includes(image.url)
+    // Find images to delete
+    imagesToDelete = currentImages.filter(image => 
+      imagesToRemove.includes(image.url) || imagesToRemove.includes(image.path)
+    );
+    
+    // Update the images array (remove specified images)
+    updateData.images = currentImages.filter(image => 
+      !imagesToRemove.includes(image.url) && !imagesToRemove.includes(image.path)
     );
   }
 
-  // Handle new images
+  // Handle new image uploads
   if (req.files && req.files.length > 0) {
     const newImages = [];
     
-    for (const file of req.files) {
+    console.log(`Processing ${req.files.length} new uploaded images...`);
+    
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      
       try {
-        // Sử dụng imageService mới để hỗ trợ cả local và S3
+        // Validate each image
+        const validation = imageService.validateImage(file);
+        if (!validation.isValid) {
+          throw new ApiError(`Image ${i + 1} validation failed: ${validation.errors.join(', ')}`, 400);
+        }
+
+        // Process image using imageService
         const result = await imageService.uploadImage(file, 'products');
+        
+        const existingImagesCount = updateData.images ? updateData.images.length : currentImages.length;
+        
         newImages.push({
           url: result.url,
           path: result.path,
           altText: name || product.name,
-          isDefault: !product.images || product.images.length === 0
+          isDefault: existingImagesCount === 0 && i === 0, // First image is default if no existing images
+          sortOrder: existingImagesCount + i
         });
+        
+        console.log(`New image ${i + 1} processed successfully:`, {
+          url: result.url,
+          path: result.path
+        });
+        
       } catch (error) {
-        throw new ApiError(`Image upload failed: ${error.message}`, 500);
+        console.error(`New image ${i + 1} upload error:`, error);
+        
+        // Clean up any successfully uploaded new images
+        for (const uploadedImage of newImages) {
+          await imageService.deleteImage(uploadedImage.path);
+        }
+        
+        throw new ApiError(`Image ${i + 1} upload failed: ${error.message}`, 500);
       }
     }
     
-    // Add new images to existing ones
+    // Add new images to existing ones (or to the filtered list if removing images)
     if (updateData.images) {
       updateData.images = [...updateData.images, ...newImages];
     } else {
-      updateData.images = [...(product.images || []), ...newImages];
+      updateData.images = [...currentImages, ...newImages];
     }
+    
+    console.log(`All ${newImages.length} new images processed successfully`);
   }
 
-  // Update the product
-  const updatedProduct = await Product.findByIdAndUpdate(
-    id,
-    updateData,
-    { new: true, runValidators: true }
-  );
+  try {
+    // Update the product
+    const updatedProduct = await Product.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    );
 
-  return ApiResponse.success(res, { product: updatedProduct });
+    // Delete removed images after successful update
+    if (imagesToDelete.length > 0) {
+      console.log(`Deleting ${imagesToDelete.length} removed images...`);
+      for (const image of imagesToDelete) {
+        try {
+          await imageService.deleteImage(image.path || image.url);
+          console.log('Image deleted successfully:', image.path || image.url);
+        } catch (error) {
+          console.error(`Failed to delete image ${image.path || image.url}:`, error.message);
+          // Continue with other images even if one fails
+        }
+      }
+    }
+
+    console.log('Product updated successfully:', {
+      id: updatedProduct._id,
+      name: updatedProduct.name,
+      imagesCount: updatedProduct.images?.length || 0
+    });
+
+    return ApiResponse.success(res, { product: updatedProduct });
+  } catch (error) {
+    // If update fails and we uploaded new images, clean them up
+    if (req.files && updateData.images) {
+      const newImagePaths = updateData.images
+        .slice(-(req.files.length))
+        .map(img => img.path);
+      
+      console.log('Cleaning up new images due to update failure...');
+      for (const imagePath of newImagePaths) {
+        await imageService.deleteImage(imagePath);
+      }
+    }
+    throw error;
+  }
 });
 
 /**
