@@ -39,7 +39,14 @@ exports.optionalAuth = (req, res, next) => {
  * Middleware giới hạn vai trò truy cập - chỉ cho phép những vai trò cụ thể
  */
 exports.authorize = (...roles) => {
+  
   return (req, res, next) => {
+    console.log('=== AUTHORIZE DEBUG ===');
+    console.log('Required roles:', roles);
+    console.log('User object:', req.user);
+    console.log('User role:', req.user?.role);
+    console.log('User role type:', typeof req.user?.role);
+    console.log('Roles includes check:', roles.includes(req.user?.role));
     if (!req.user) {
       return next(
         new ApiError('Bạn cần đăng nhập để truy cập tính năng này', 401)
