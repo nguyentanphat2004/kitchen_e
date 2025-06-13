@@ -55,14 +55,13 @@ const queryClient = new QueryClient({
   },
 });
 
-// AppRoutes component to use routes with the AuthProvider
 const AppRoutes: React.FC = () => {
-  // Define your routes hierarchy
+
   const routes = [
-    // Auth routes (already defined in authRoutes)
+
     ...authRoutes,
     
-    // Add default /auth route that redirects to login
+
     {
       path: '/auth',
       element: <Navigate to="/auth/login" replace />

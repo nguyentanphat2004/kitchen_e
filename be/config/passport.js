@@ -1,14 +1,29 @@
-// config/passport.js
+// config/passport.js - FIXED VERSION
 const passport = require('passport');
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { Strategy: LocalStrategy } = require('passport-local');
 const { Strategy: GoogleStrategy } = require('passport-google-oauth20');
 const { Strategy: FacebookStrategy } = require('passport-facebook');
 const mongoose = require('mongoose');
+const crypto = require('crypto'); // 🔧 ADD: Import crypto
 const User = require('../models/User');
 const ApiError = require('../utils/apiError');
 
-// Cấu hình các chiến lược xác thực
+// 🔧 FIX 1: Add environment validation
+const requiredEnvVars = [
+  'JWT_SECRET',
+  'GOOGLE_CLIENT_ID', 
+  'GOOGLE_CLIENT_SECRET',
+  'FACEBOOK_APP_ID',
+  'FACEBOOK_APP_SECRET',
+  'API_URL'
+];
+
+requiredEnvVars.forEach(envVar => {
+  if (!process.env[envVar]) {
+    throw new Error(`Missing required environment variable: ${envVar}`);
+  }
+});
 
 // JWT Strategy (Dùng cho xác thực API)
 const jwtOptions = {
@@ -60,11 +75,19 @@ passport.use(
     },
     async (email, password, done) => {
       try {
+        // 🔧 FIX 2: Safe email handling
+        if (!email) {
+          return done(null, false, { message: 'Email là bắt buộc' });
+        }
+
         // Tìm người dùng bằng email VÀ bao gồm trường password
         const user = await User.findOne({
-          $or: [{ email: email.toLowerCase() }, { username: email }],
+          $or: [
+            { email: email.toLowerCase() }, 
+            { username: email }
+          ],
           isDeleted: false
-        }).select('+password'); // Thêm dòng này để lấy cả trường password
+        }).select('+password');
         
         if (!user) {
           return done(null, false, { message: 'Email hoặc mật khẩu không đúng' });
@@ -85,6 +108,11 @@ passport.use(
   )
 );
 
+// 🔧 FIX 3: Helper function for secure password generation
+const generateSecurePassword = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
 // Google OAuth Strategy
 passport.use(
   new GoogleStrategy(
@@ -96,11 +124,17 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
+        // 🔧 FIX 4: Better email validation
+        const email = profile.emails?.[0]?.value;
+        if (!email) {
+          return done(new Error('Google profile không có email'), false);
+        }
+
         // Kiểm tra xem người dùng đã tồn tại trong DB chưa
         let user = await User.findOne({
           $or: [
             { googleId: profile.id },
-            { email: profile.emails[0].value }
+            { email: email }
           ],
           isDeleted: false
         });
@@ -115,21 +149,33 @@ passport.use(
           return done(null, user);
         }
         
+        // 🔧 FIX 5: Better username generation
+        const baseUsername = `google_${profile.id}`;
+        let username = baseUsername;
+        let counter = 1;
+        
+        // Ensure username is unique
+        while (await User.findOne({ username })) {
+          username = `${baseUsername}_${counter}`;
+          counter++;
+        }
+        
         // Tạo người dùng mới nếu chưa tồn tại
         const newUser = await User.create({
           googleId: profile.id,
-          email: profile.emails[0].value,
-          firstName: profile.name.givenName || '',
-          lastName: profile.name.familyName || '',
-          username: `user_${profile.id}`,
-          avatar: profile.photos[0].value,
-          password: mongoose.Types.ObjectId(), // Tạo mật khẩu ngẫu nhiên
+          email: email,
+          firstName: profile.name?.givenName || '',
+          lastName: profile.name?.familyName || '',
+          username: username, // 🔧 FIX: Use unique username
+          avatar: profile.photos?.[0]?.value,
+          password: generateSecurePassword(), // 🔧 FIX: Secure password generation
           isEmailVerified: true,
           authProvider: 'google'
         });
         
         return done(null, newUser);
       } catch (error) {
+        console.error('Google OAuth error:', error);
         return done(error, false);
       }
     }
@@ -147,11 +193,14 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
+        // 🔧 FIX 6: Better Facebook email handling
+        const email = profile.emails?.[0]?.value || `${profile.id}@facebook.temp`;
+
         // Kiểm tra xem người dùng đã tồn tại trong DB chưa
         let user = await User.findOne({
           $or: [
             { facebookId: profile.id },
-            { email: profile.emails?.[0].value }
+            ...(profile.emails?.[0]?.value ? [{ email: profile.emails[0].value }] : [])
           ],
           isDeleted: false
         });
@@ -166,21 +215,33 @@ passport.use(
           return done(null, user);
         }
         
+        // 🔧 FIX 7: Better username generation for Facebook
+        const baseUsername = `facebook_${profile.id}`;
+        let username = baseUsername;
+        let counter = 1;
+        
+        // Ensure username is unique
+        while (await User.findOne({ username })) {
+          username = `${baseUsername}_${counter}`;
+          counter++;
+        }
+        
         // Tạo người dùng mới nếu chưa tồn tại
         const newUser = await User.create({
           facebookId: profile.id,
-          email: profile.emails?.[0].value || `${profile.id}@facebook.com`,
-          firstName: profile.name.givenName || '',
-          lastName: profile.name.familyName || '',
-          username: `user_${profile.id}`,
-          avatar: profile.photos?.[0].value,
-          password: mongoose.Types.ObjectId(), // Tạo mật khẩu ngẫu nhiên
-          isEmailVerified: profile.emails?.[0].value ? true : false,
+          email: email,
+          firstName: profile.name?.givenName || '',
+          lastName: profile.name?.familyName || '',
+          username: username, // 🔧 FIX: Use unique username
+          avatar: profile.photos?.[0]?.value,
+          password: generateSecurePassword(), // 🔧 FIX: Secure password generation
+          isEmailVerified: profile.emails?.[0]?.value ? true : false,
           authProvider: 'facebook'
         });
         
         return done(null, newUser);
       } catch (error) {
+        console.error('Facebook OAuth error:', error);
         return done(error, false);
       }
     }

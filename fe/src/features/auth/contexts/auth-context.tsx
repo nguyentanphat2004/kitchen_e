@@ -29,7 +29,8 @@ type AuthAction =
   | { type: 'LOGOUT' }
   | { type: 'CLEAR_ERROR' }
   | { type: 'SET_LOADING' }
-  | { type: 'TOKEN_EXPIRED' }; // 🔧 NEW: Handle token expiration
+  | { type: 'TOKEN_EXPIRED' }
+  | { type: 'NETWORK_ERROR' }; // 🔧 NEW: Handle network errors
 
 // Create context
 interface AuthContextProps {
@@ -44,7 +45,8 @@ interface AuthContextProps {
   verifyEmail: (token: string) => Promise<{ success: boolean; message: string }>;
   resendVerification: () => Promise<{ success: boolean; message: string }>;
   clearError: () => void;
-  refreshUser: () => Promise<void>; // 🔧 NEW: Manual user refresh
+  refreshUser: () => Promise<void>;
+  loadUser: () => Promise<void>; // 🔧 NEW: Expose loadUser
 }
 
 export const AuthContext = createContext<AuthContextProps | undefined>(undefined);
@@ -67,7 +69,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         ...state,
         user: action.payload,
         loading: false,
-        error: null // 🔧 FIX: Clear error on successful update
+        error: null
       };
     case 'AUTH_ERROR':
       return {
@@ -77,7 +79,13 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         loading: false,
         error: action.payload
       };
-    case 'TOKEN_EXPIRED': // 🔧 NEW: Handle token expiration separately
+    case 'NETWORK_ERROR': // 🔧 NEW: Handle network errors differently
+      return {
+        ...state,
+        loading: false,
+        error: action.payload
+      };
+    case 'TOKEN_EXPIRED':
       return {
         ...state,
         isAuthenticated: false,
@@ -116,64 +124,136 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
   const navigate = useNavigate();
-  const tokenCheckInterval = useRef<NodeJS.Timeout | null>(null); // 🔧 NEW: Token monitoring
-  const loadUserAttempts = useRef(0); // 🔧 NEW: Prevent infinite retry
+  
+  // 🔧 FIX 1: Better ref management
+  const tokenCheckInterval = useRef<NodeJS.Timeout | null>(null);
+  const loadUserAttempts = useRef(0);
+  const isComponentMounted = useRef(true);
+  const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
+  
   const maxRetryAttempts = 3;
+  const retryDelays = [1000, 3000, 5000]; // Progressive delays
 
-  // 🔧 FIX 1: Improved loadUser with better error handling
-  const loadUser = useCallback(async (isRetry = false) => {
+  // 🔧 FIX 2: Cleanup function
+  const cleanup = useCallback(() => {
+    if (tokenCheckInterval.current) {
+      clearInterval(tokenCheckInterval.current);
+      tokenCheckInterval.current = null;
+    }
+    
+    // Clear all retry timeouts
+    retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+    retryTimeouts.current.clear();
+  }, []);
+
+  // 🔧 FIX 3: Component cleanup on unmount
+  useEffect(() => {
+    isComponentMounted.current = true;
+    
+    return () => {
+      isComponentMounted.current = false;
+      cleanup();
+    };
+  }, [cleanup]);
+
+  // 🔧 FIX 4: Improved loadUser with exponential backoff
+  const loadUser = useCallback(async (isRetry = false, forceRefresh = false) => {
+    // Don't proceed if component is unmounted
+    if (!isComponentMounted.current) return;
+
     try {
       // ✅ Check if token exists and is valid first
       if (!authService.isAuthenticated()) {
-        dispatch({ type: 'AUTH_ERROR', payload: 'No valid authentication token' });
-        return;
-      }
-
-      // ✅ Try to get cached user first for better UX
-      const cachedUser = authService.getCachedUser();
-      if (cachedUser && !isRetry) {
-        dispatch({ type: 'USER_LOADED', payload: cachedUser });
-        
-        // ✅ Verify với server trong background
-        try {
-          const { user } = await authService.getCurrentUser();
-          if (JSON.stringify(user) !== JSON.stringify(cachedUser)) {
-            dispatch({ type: 'USER_LOADED', payload: user });
-          }
-        } catch (error) {
-          // ✅ Nếu cached user hợp lệ, không cần báo lỗi
-          console.warn('Failed to refresh user data:', error);
+        if (isComponentMounted.current) {
+          dispatch({ type: 'AUTH_ERROR', payload: 'No valid authentication token' });
         }
         return;
       }
 
+      // ✅ Try to get cached user first for better UX (if not forcing refresh)
+      if (!forceRefresh && !isRetry) {
+        const cachedUser = authService.getCachedUser();
+        if (cachedUser && isComponentMounted.current) {
+          dispatch({ type: 'USER_LOADED', payload: cachedUser });
+          
+          // ✅ Verify with server in background
+          setTimeout(() => {
+            if (isComponentMounted.current) {
+              loadUser(true, true);
+            }
+          }, 1000);
+          return;
+        }
+      }
+
       // ✅ Fetch user from server
       const { user } = await authService.getCurrentUser();
-      dispatch({ type: 'USER_LOADED', payload: user });
-      loadUserAttempts.current = 0; // Reset retry counter
+      
+      if (isComponentMounted.current) {
+        dispatch({ type: 'USER_LOADED', payload: user });
+        loadUserAttempts.current = 0; // Reset retry counter
+      }
       
     } catch (error: any) {
+      if (!isComponentMounted.current) return;
+
       loadUserAttempts.current++;
+      
+      console.error('LoadUser error:', error);
       
       // ✅ Different handling based on error type
       if (error.response?.status === 401) {
         dispatch({ type: 'TOKEN_EXPIRED' });
+      } else if (error.code === 'NETWORK_ERROR' || !error.response) {
+        if (loadUserAttempts.current >= maxRetryAttempts) {
+          dispatch({ type: 'NETWORK_ERROR', payload: 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.' });
+        } else {
+          // ✅ Exponential backoff retry
+          const delay = retryDelays[loadUserAttempts.current - 1] || 5000;
+          const timeout = setTimeout(() => {
+            if (isComponentMounted.current) {
+              retryTimeouts.current.delete(timeout);
+              loadUser(true, forceRefresh);
+            }
+          }, delay);
+          retryTimeouts.current.add(timeout);
+        }
       } else if (loadUserAttempts.current >= maxRetryAttempts) {
         dispatch({ type: 'AUTH_ERROR', payload: 'Không thể tải thông tin người dùng. Vui lòng đăng nhập lại.' });
       } else {
-        // ✅ Retry after a delay
-        setTimeout(() => loadUser(true), 2000);
+        // ✅ Retry with exponential backoff
+        const delay = retryDelays[loadUserAttempts.current - 1] || 5000;
+        const timeout = setTimeout(() => {
+          if (isComponentMounted.current) {
+            retryTimeouts.current.delete(timeout);
+            loadUser(true, forceRefresh);
+          }
+        }, delay);
+        retryTimeouts.current.add(timeout);
       }
     }
   }, []);
 
-  // 🔧 FIX 2: Token expiration monitoring
+  // 🔧 FIX 5: Improved token expiration monitoring
   const startTokenMonitoring = useCallback(() => {
+    // Clear existing interval
     if (tokenCheckInterval.current) {
       clearInterval(tokenCheckInterval.current);
+      tokenCheckInterval.current = null;
     }
 
+    // Only start monitoring if user is authenticated
+    if (!state.isAuthenticated) return;
+
     tokenCheckInterval.current = setInterval(() => {
+      if (!isComponentMounted.current) {
+        if (tokenCheckInterval.current) {
+          clearInterval(tokenCheckInterval.current);
+          tokenCheckInterval.current = null;
+        }
+        return;
+      }
+
       const timeUntilExpiration = authService.getTimeUntilExpiration();
       
       // ✅ Token sắp hết hạn trong 5 phút
@@ -183,49 +263,66 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       // ✅ Token đã hết hạn
-      if (timeUntilExpiration <= 0 && state.isAuthenticated) {
-        dispatch({ type: 'TOKEN_EXPIRED' });
-        clearInterval(tokenCheckInterval.current!);
+      if (timeUntilExpiration <= 0) {
+        if (isComponentMounted.current && state.isAuthenticated) {
+          dispatch({ type: 'TOKEN_EXPIRED' });
+        }
+        
+        if (tokenCheckInterval.current) {
+          clearInterval(tokenCheckInterval.current);
+          tokenCheckInterval.current = null;
+        }
       }
     }, 60000); // Check every minute
   }, [state.isAuthenticated]);
 
-  // 🔧 FIX 3: Cleanup monitoring on unmount
+  // 🔧 FIX 6: Start monitoring when authentication state changes
   useEffect(() => {
-    return () => {
+    if (state.isAuthenticated) {
+      startTokenMonitoring();
+    } else {
       if (tokenCheckInterval.current) {
         clearInterval(tokenCheckInterval.current);
+        tokenCheckInterval.current = null;
       }
-    };
-  }, []);
+    }
+  }, [state.isAuthenticated, startTokenMonitoring]);
 
-  // Load user on first load and start monitoring
+  // Load user on first load
   useEffect(() => {
     loadUser();
-    if (authService.isAuthenticated()) {
-      startTokenMonitoring();
-    }
-  }, [loadUser, startTokenMonitoring]);
+  }, [loadUser]);
 
-  // 🔧 FIX 4: Improved login with better error handling
+  // 🔧 FIX 7: Improved login with better error handling
   const login = async (loginData: LoginRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
       const data = await authService.login(loginData);
-      dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
       
-      // ✅ Start token monitoring after successful login
-      startTokenMonitoring();
-      
-      // ✅ Better navigation handling
-      const urlParams = new URLSearchParams(window.location.search);
-      const redirectTo = urlParams.get('redirect') || '/shop';
-      navigate(redirectTo);
+      if (isComponentMounted.current) {
+        dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
+        
+        // ✅ Start token monitoring after successful login
+        setTimeout(() => {
+          if (isComponentMounted.current) {
+            startTokenMonitoring();
+          }
+        }, 100);
+        
+        // ✅ Better navigation handling
+        const urlParams = new URLSearchParams(window.location.search);
+        const redirectTo = urlParams.get('redirect') || '/shop';
+        navigate(redirectTo);
+      }
     } catch (error: any) {
+      if (!isComponentMounted.current) return;
+
       let errorMessage = 'Đăng nhập thất bại. Vui lòng thử lại.';
       
       // ✅ Better error message handling
-      if (error.response?.status === 401) {
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.status === 401) {
         errorMessage = 'Email hoặc mật khẩu không đúng.';
       } else if (error.response?.status === 429) {
         errorMessage = 'Quá nhiều lần thử đăng nhập. Vui lòng thử lại sau.';
@@ -237,22 +334,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 5: Improved register
+  // 🔧 FIX 8: Improved register
   const register = async (registerData: RegisterRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
       const data = await authService.register(registerData);
-      dispatch({ type: 'REGISTER_SUCCESS', payload: data.user });
       
-      // ✅ Start token monitoring after successful registration
-      startTokenMonitoring();
-      
-      navigate('/shop');
+      if (isComponentMounted.current) {
+        dispatch({ type: 'REGISTER_SUCCESS', payload: data.user });
+        
+        // ✅ Start token monitoring after successful registration
+        setTimeout(() => {
+          if (isComponentMounted.current) {
+            startTokenMonitoring();
+          }
+        }, 100);
+        
+        navigate('/shop');
+      }
     } catch (error: any) {
+      if (!isComponentMounted.current) return;
+
       let errorMessage = 'Đăng ký thất bại. Vui lòng thử lại.';
       
       // ✅ Better error message handling
-      if (error.response?.status === 400) {
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.status === 400) {
         errorMessage = error.response.data?.error?.message || 'Thông tin đăng ký không hợp lệ.';
       } else if (error.response?.status === 409) {
         errorMessage = 'Email hoặc tên đăng nhập đã được sử dụng.';
@@ -262,35 +370,45 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 6: Improved logout
+  // 🔧 FIX 9: Improved logout with cleanup
   const logout = async () => {
     try {
-      // ✅ Stop token monitoring
-      if (tokenCheckInterval.current) {
-        clearInterval(tokenCheckInterval.current);
-      }
+      // ✅ Stop token monitoring first
+      cleanup();
       
       await authService.logout();
-      dispatch({ type: 'LOGOUT' });
-      navigate('/auth');
+      
+      if (isComponentMounted.current) {
+        dispatch({ type: 'LOGOUT' });
+        navigate('/auth');
+      }
     } catch (error) {
       console.error('Logout error:', error);
       // ✅ Still log out on client side even if server request fails
-      dispatch({ type: 'LOGOUT' });
-      navigate('/auth');
+      if (isComponentMounted.current) {
+        dispatch({ type: 'LOGOUT' });
+        navigate('/auth');
+      }
     }
   };
 
-  // 🔧 FIX 7: Better error handling for updateUser
+  // 🔧 FIX 10: Better error handling for updateUser
   const updateUser = async (userData: UpdateUserRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
       const { user } = await authService.updateUserProfile(userData);
-      dispatch({ type: 'UPDATE_USER', payload: user });
+      
+      if (isComponentMounted.current) {
+        dispatch({ type: 'UPDATE_USER', payload: user });
+      }
     } catch (error: any) {
+      if (!isComponentMounted.current) return;
+
       let errorMessage = 'Cập nhật thông tin thất bại.';
       
-      if (error.response?.status === 400) {
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.status === 400) {
         errorMessage = error.response.data?.error?.message || 'Thông tin không hợp lệ.';
       } else if (error.response?.status === 401) {
         dispatch({ type: 'TOKEN_EXPIRED' });
@@ -302,19 +420,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 8: Better error handling for updatePassword
+  // 🔧 FIX 11: Better error handling for updatePassword
   const updatePassword = async (passwordData: UpdatePasswordRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
       const data = await authService.updatePassword(passwordData);
-      dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
       
-      // ✅ Restart token monitoring với token mới
-      startTokenMonitoring();
+      if (isComponentMounted.current) {
+        dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
+        
+        // ✅ Restart token monitoring with new token
+        setTimeout(() => {
+          if (isComponentMounted.current) {
+            startTokenMonitoring();
+          }
+        }, 100);
+      }
     } catch (error: any) {
+      if (!isComponentMounted.current) return;
+
       let errorMessage = 'Cập nhật mật khẩu thất bại.';
       
-      if (error.response?.status === 401) {
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.status === 401) {
         errorMessage = 'Mật khẩu hiện tại không đúng.';
       } else if (error.response?.data?.error?.message) {
         errorMessage = error.response.data.error.message;
@@ -325,9 +454,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 NEW: Manual user refresh
+  // 🔧 FIX 12: Manual user refresh
   const refreshUser = async () => {
-    await loadUser(true);
+    await loadUser(true, true);
   };
 
   // Existing methods with improved error handling
@@ -336,10 +465,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authService.forgotPassword(email);
       return { success: true, message: response.message };
     } catch (error: any) {
-      return { 
-        success: false, 
-        message: error.response?.data?.error?.message || 'Không thể gửi email đặt lại mật khẩu.' 
-      };
+      let errorMessage = 'Không thể gửi email đặt lại mật khẩu.';
+      
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.data?.error?.message) {
+        errorMessage = error.response.data.error.message;
+      }
+      
+      return { success: false, message: errorMessage };
     }
   };
 
@@ -348,17 +482,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authService.resetPassword(token, password);
       return { success: true, message: response.message };
     } catch (error: any) {
-      return { 
-        success: false, 
-        message: error.response?.data?.error?.message || 'Đặt lại mật khẩu thất bại.' 
-      };
+      let errorMessage = 'Đặt lại mật khẩu thất bại.';
+      
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.data?.error?.message) {
+        errorMessage = error.response.data.error.message;
+      }
+      
+      return { success: false, message: errorMessage };
     }
   };
 
   const verifyEmail = async (token: string) => {
     try {
       const response = await authService.verifyEmail(token);
-      if (state.user) {
+      if (state.user && isComponentMounted.current) {
         dispatch({ 
           type: 'UPDATE_USER', 
           payload: { ...state.user, isEmailVerified: true } 
@@ -366,10 +505,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       return { success: true, message: response.message };
     } catch (error: any) {
-      return { 
-        success: false, 
-        message: error.response?.data?.error?.message || 'Xác thực email thất bại.' 
-      };
+      let errorMessage = 'Xác thực email thất bại.';
+      
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.data?.error?.message) {
+        errorMessage = error.response.data.error.message;
+      }
+      
+      return { success: false, message: errorMessage };
     }
   };
 
@@ -378,10 +522,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authService.resendVerificationEmail();
       return { success: true, message: response.message };
     } catch (error: any) {
-      return { 
-        success: false, 
-        message: error.response?.data?.error?.message || 'Gửi lại email xác thực thất bại.' 
-      };
+      let errorMessage = 'Gửi lại email xác thực thất bại.';
+      
+      if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
+      } else if (error.response?.data?.error?.message) {
+        errorMessage = error.response.data.error.message;
+      }
+      
+      return { success: false, message: errorMessage };
     }
   };
 
@@ -403,7 +552,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         verifyEmail,
         resendVerification,
         refreshUser,
-        clearError
+        clearError,
+        loadUser
       }}
     >
       {children}
