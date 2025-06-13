@@ -1,4 +1,3 @@
-// routes/api/categories.routes.js
 const express = require('express');
 const router = express.Router();
 const categoryController = require('../../controllers/category.controller');
@@ -11,12 +10,12 @@ router.get('/featured', categoryController.getFeaturedCategories);
 router.get('/:id', categoryController.getCategory);
 router.get('/:id/products', categoryController.getCategoryProducts);
 
-// Admin/Staff category routes with image upload
+// Admin/Staff category routes with proper image upload
 router.post(
   '/',
   protect,
   authorize('admin', 'staff'),
-  uploadCategoryImage, // This uses the uploadSingle('image') middleware
+  uploadCategoryImage, // Single image upload for categories
   categoryController.createCategory
 );
 
@@ -24,7 +23,7 @@ router.put(
   '/:id',
   protect,
   authorize('admin', 'staff'),
-  uploadCategoryImage, // This uses the uploadSingle('image') middleware
+  uploadCategoryImage, // Single image upload for categories
   categoryController.updateCategory
 );
 

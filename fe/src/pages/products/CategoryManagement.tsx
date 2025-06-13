@@ -1,3 +1,4 @@
+// fe/src/pages/products/CategoryManagement.tsx
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
@@ -17,7 +18,8 @@ import {
   Tooltip,
   InputNumber,
   TreeSelect,
-  Alert
+  Alert,
+  Spin
 } from 'antd';
 import {
   PlusOutlined,
@@ -27,10 +29,10 @@ import {
   UploadOutlined,
   EyeOutlined,
   UndoOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
-import { api } from '../../services/api';
-import { urlUtils } from '../../config/api.config';
+import { api, urlUtils, uploadUtils, endpoints } from '../../config/api.config';
 import type { UploadFile, RcFile } from 'antd/es/upload/interface';
 
 const { confirm } = Modal;
@@ -58,7 +60,7 @@ interface Category {
   updatedAt: string;
   productsCount?: number;
   subcategories?: Category[];
-  level?: number; // Add this for flattened categories
+  level?: number;
 }
 
 interface CategoryFormData {
@@ -128,54 +130,95 @@ const CategoryManagement: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch categories with error handling
-  const { data: categoriesData, isLoading, error } = useQuery({
+  // Fetch categories with comprehensive error handling
+  const { data: categoriesData, isLoading, error, refetch } = useQuery({
     queryKey: ['categories', { flat: false, includeDeleted: showDeleted }],
     queryFn: async () => {
       try {
+        console.log('Fetching categories...');
         const params = new URLSearchParams({
           flat: 'false',
           includeProducts: 'true'
         });
         
-        const response = await api.get(`/categories?${params}`);
+        const response = await api.get(`${endpoints.categories.base}?${params}`);
         console.log('Categories API response:', response.data);
-        return response.data?.data || response.data;
-      } catch (error) {
+        
+        // Handle different response structures
+        const data = response.data?.data || response.data;
+        return data;
+      } catch (error: any) {
         console.error('Failed to fetch categories:', error);
-        throw error;
+        
+        // Provide more specific error messages
+        if (error.response?.status === 404) {
+          throw new Error('Categories endpoint not found');
+        } else if (error.response?.status === 500) {
+          throw new Error('Server error while fetching categories');
+        } else if (error.code === 'NETWORK_ERROR') {
+          throw new Error('Network error. Please check your connection.');
+        }
+        
+        throw new Error(error.response?.data?.message || error.message || 'Failed to fetch categories');
       }
     },
     retry: 3,
-    retryDelay: 1000
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    cacheTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Safe data extraction with defaults
+  // Safe data extraction with comprehensive error handling
   const categories = React.useMemo(() => {
     try {
-      const cats = categoriesData?.categories || [];
-      return Array.isArray(cats) ? cats : [];
+      if (!categoriesData) {
+        console.log('No categories data available');
+        return [];
+      }
+      
+      const cats = categoriesData?.categories || categoriesData || [];
+      
+      if (!Array.isArray(cats)) {
+        console.error('Categories data is not an array:', typeof cats);
+        return [];
+      }
+      
+      console.log(`Processed ${cats.length} categories`);
+      return cats;
     } catch (error) {
       console.error('Error processing categories data:', error);
       return [];
     }
   }, [categoriesData]);
 
-  // Create/Update category mutation
+  // Create/Update category mutation with enhanced error handling
   const mutation = useMutation({
     mutationFn: async (formData: FormData) => {
-      console.log('Submitting form data...');
+      console.log('=== SUBMITTING CATEGORY FORM ===');
+      
+      // Log FormData contents for debugging
+      console.log('FormData entries:');
+      for (const [key, value] of formData.entries()) {
+        if (value instanceof File) {
+          console.log(`${key}: File(${value.name}, ${value.size} bytes, ${value.type})`);
+        } else {
+          console.log(`${key}: ${value}`);
+        }
+      }
       
       const config = {
         headers: { 
           'Content-Type': 'multipart/form-data'
-        }
+        },
+        timeout: 60000 // 60 seconds for file uploads
       };
 
       if (editingCategory) {
-        return api.put(`/categories/${editingCategory._id}`, formData, config);
+        console.log(`Updating category: ${editingCategory._id}`);
+        return api.put(endpoints.categories.byId(editingCategory._id), formData, config);
       } else {
-        return api.post('/categories', formData, config);
+        console.log('Creating new category');
+        return api.post(endpoints.categories.base, formData, config);
       }
     },
     onSuccess: (response) => {
@@ -186,70 +229,112 @@ const CategoryManagement: React.FC = () => {
     },
     onError: (error: any) => {
       console.error('Category save error:', error);
-      const message = error.response?.data?.message || 
-                    error.response?.data?.error || 
-                    `Failed to ${editingCategory ? 'update' : 'create'} category`;
+      
+      let message = `Failed to ${editingCategory ? 'update' : 'create'} category`;
+      
+      if (error.response?.data?.message) {
+        message = error.response.data.message;
+      } else if (error.response?.data?.error) {
+        message = error.response.data.error;
+      } else if (error.message) {
+        message = error.message;
+      }
+      
+      // Handle specific error types
+      if (error.code === 'NETWORK_ERROR') {
+        message = 'Network error. Please check your connection.';
+      } else if (error.response?.status === 413) {
+        message = 'File too large. Please choose a smaller image.';
+      } else if (error.response?.status === 415) {
+        message = 'Unsupported file type. Please upload a valid image.';
+      }
+      
       toast.error(message);
     }
   });
 
-  // Delete and restore mutations
+  // Delete and restore mutations with better error handling
   const deleteMutation = useMutation({
-    mutationFn: async (categoryId: string) => api.delete(`/categories/${categoryId}`),
+    mutationFn: async (categoryId: string) => {
+      console.log(`Deleting category: ${categoryId}`);
+      return api.delete(endpoints.categories.byId(categoryId));
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       toast.success('Category deleted successfully');
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to delete category');
+      console.error('Delete error:', error);
+      const message = error.response?.data?.message || 'Failed to delete category';
+      toast.error(message);
     }
   });
 
   const restoreMutation = useMutation({
-    mutationFn: async (categoryId: string) => api.put(`/categories/${categoryId}/restore`),
+    mutationFn: async (categoryId: string) => {
+      console.log(`Restoring category: ${categoryId}`);
+      return api.put(endpoints.categories.restore(categoryId));
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       toast.success('Category restored successfully');
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to restore category');
+      console.error('Restore error:', error);
+      const message = error.response?.data?.message || 'Failed to restore category';
+      toast.error(message);
     }
   });
 
-  // Handle form submission
+  // Enhanced form submission with comprehensive validation
   const handleSubmit = async (values: CategoryFormData) => {
     try {
+      console.log('=== FORM SUBMISSION START ===');
+      console.log('Form values:', values);
+      console.log('File list:', fileList);
+      
       setUploading(true);
-      const formData = new FormData();
       
-      // Add form fields to FormData
-      Object.entries(values).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          formData.append(key, typeof value === 'boolean' ? value.toString() : String(value));
-        }
-      });
-      
-      // Add image file if exists
-      if (fileList.length > 0 && fileList[0].originFileObj) {
-        formData.append('image', fileList[0].originFileObj);
-        console.log('Adding image file:', {
-          name: fileList[0].name,
-          size: fileList[0].size,
-          type: fileList[0].type
-        });
+      // Validate required fields
+      if (!values.name || values.name.trim() === '') {
+        throw new Error('Category name is required');
       }
       
+      // Validate file if uploading
+      if (fileList.length > 0 && fileList[0].originFileObj) {
+        const validation = uploadUtils.validateFile(fileList[0].originFileObj as File, {
+          maxSize: 10 * 1024 * 1024, // 10MB
+          allowedTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+        });
+        
+        if (!validation.isValid) {
+          throw new Error(`File validation failed: ${validation.errors.join(', ')}`);
+        }
+      }
+      
+      // Create FormData using utility function
+      const files = fileList.length > 0 && fileList[0].originFileObj 
+        ? fileList[0].originFileObj as File 
+        : undefined;
+      
+      const formData = uploadUtils.createFormData(values, files, 'image');
+      
+      console.log('FormData created, submitting...');
       await mutation.mutateAsync(formData);
-    } catch (error) {
+      
+    } catch (error: any) {
       console.error('Form submission error:', error);
+      toast.error(error.message || 'Failed to submit form');
     } finally {
       setUploading(false);
     }
   };
 
-  // Modal handlers
+  // Enhanced modal handlers
   const handleModalOpen = (category?: Category) => {
     try {
+      console.log('Opening modal for category:', category?.name || 'new category');
+      
       if (category) {
         setEditingCategory(category);
         form.setFieldsValue({
@@ -269,13 +354,16 @@ const CategoryManagement: React.FC = () => {
         
         // Set image preview if exists
         if (category.image) {
-          setFileList([{
-            uid: '-1',
-            name: 'Current Image',
-            status: 'done',
-            url: category.image,
-            thumbUrl: category.image
-          }]);
+          const imageUrl = urlUtils.getFullImageUrl(category.image);
+          if (imageUrl) {
+            setFileList([{
+              uid: '-1',
+              name: 'Current Image',
+              status: 'done',
+              url: imageUrl,
+              thumbUrl: imageUrl
+            }]);
+          }
         } else {
           setFileList([]);
         }
@@ -292,6 +380,7 @@ const CategoryManagement: React.FC = () => {
   };
 
   const handleModalClose = () => {
+    console.log('Closing modal');
     setIsModalVisible(false);
     setEditingCategory(null);
     form.resetFields();
@@ -302,7 +391,7 @@ const CategoryManagement: React.FC = () => {
     setUploading(false);
   };
 
-  // File upload handlers
+  // Enhanced file upload handlers
   const handlePreview = async (file: UploadFile) => {
     try {
       if (!file.url && !file.preview) {
@@ -327,15 +416,19 @@ const CategoryManagement: React.FC = () => {
     });
 
   const beforeUpload = (file: RcFile) => {
-    const isImage = file.type.startsWith('image/');
-    if (!isImage) {
-      toast.error('You can only upload image files!');
-      return false;
-    }
+    console.log('Validating file before upload:', {
+      name: file.name,
+      size: file.size,
+      type: file.type
+    });
     
-    const isLt10M = file.size / 1024 / 1024 < 10;
-    if (!isLt10M) {
-      toast.error('Image must smaller than 10MB!');
+    const validation = uploadUtils.validateFile(file, {
+      maxSize: 10 * 1024 * 1024, // 10MB
+      allowedTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+    });
+    
+    if (!validation.isValid) {
+      validation.errors.forEach(error => toast.error(error));
       return false;
     }
     
@@ -343,6 +436,7 @@ const CategoryManagement: React.FC = () => {
   };
 
   const handleChange = ({ fileList: newFileList }: { fileList: UploadFile[] }) => {
+    console.log('File list changed:', newFileList.length);
     setFileList(newFileList.slice(-1)); // Only keep the last uploaded file
   };
 
@@ -355,45 +449,51 @@ const CategoryManagement: React.FC = () => {
     </div>
   );
 
-  // Safe tree building functions
+  // Safe tree building functions with enhanced error handling
   const buildTreeSelectData = (categories: Category[], excludeId?: string): any[] => {
     try {
-      if (!Array.isArray(categories)) return [];
+      if (!Array.isArray(categories)) {
+        console.log('buildTreeSelectData: categories is not an array');
+        return [];
+      }
       
-      const validCategories = categories.filter(cat => 
-        cat && 
-        !cat.isDeleted && 
-        cat._id !== excludeId && 
-        cat.isActive
-      );
+      const validCategories = categories.filter(cat => {
+        if (!cat || typeof cat !== 'object') return false;
+        if (!cat._id || !cat.name) return false;
+        if (cat.isDeleted) return false;
+        if (cat._id === excludeId) return false;
+        if (!cat.isActive) return false;
+        return true;
+      });
+      
+      console.log(`buildTreeSelectData: Processing ${validCategories.length} valid categories`);
       
       const categoryMap = new Map();
       const treeData: any[] = [];
 
+      // Build category map
       validCategories.forEach(category => {
-        if (category?._id && category?.name) {
-          categoryMap.set(category._id, {
-            title: category.name,
-            value: category._id,
-            children: []
-          });
-        }
+        categoryMap.set(category._id, {
+          title: category.name,
+          value: category._id,
+          children: []
+        });
       });
 
+      // Build tree structure
       validCategories.forEach(category => {
-        if (category?._id) {
-          const node = categoryMap.get(category._id);
-          if (node && category.parentId && categoryMap.has(category.parentId)) {
-            const parent = categoryMap.get(category.parentId);
-            if (parent) {
-              parent.children.push(node);
-            }
-          } else if (node) {
-            treeData.push(node);
+        const node = categoryMap.get(category._id);
+        if (node && category.parentId && categoryMap.has(category.parentId)) {
+          const parent = categoryMap.get(category.parentId);
+          if (parent) {
+            parent.children.push(node);
           }
+        } else if (node) {
+          treeData.push(node);
         }
       });
 
+      console.log(`buildTreeSelectData: Built tree with ${treeData.length} root nodes`);
       return treeData;
     } catch (error) {
       console.error('Error building tree select data:', error);
@@ -403,21 +503,28 @@ const CategoryManagement: React.FC = () => {
 
   const buildCategoryTree = (categories: Category[]): Category[] => {
     try {
-      if (!Array.isArray(categories)) return [];
+      if (!Array.isArray(categories)) {
+        console.log('buildCategoryTree: categories is not an array');
+        return [];
+      }
       
-      const map = new Map<string, Category & { subcategories: Category[] }>();
-      const roots: (Category & { subcategories: Category[] })[] = [];
-
-      categories.forEach(cat => {
-        if (cat?._id) {
-          map.set(cat._id, { ...cat, subcategories: cat.subcategories || [] });
-        }
-      });
-
+      // If categories already have subcategories populated, return as is
       if (categories.length > 0 && categories[0]?.subcategories !== undefined) {
+        console.log('buildCategoryTree: Categories already have subcategories');
         return categories;
       }
 
+      const map = new Map<string, Category & { subcategories: Category[] }>();
+      const roots: (Category & { subcategories: Category[] })[] = [];
+
+      // Initialize map with all categories
+      categories.forEach(cat => {
+        if (cat?._id) {
+          map.set(cat._id, { ...cat, subcategories: [] });
+        }
+      });
+
+      // Build parent-child relationships
       map.forEach(cat => {
         if (cat.parentId && map.has(cat.parentId)) {
           const parent = map.get(cat.parentId)!;
@@ -429,6 +536,7 @@ const CategoryManagement: React.FC = () => {
         }
       });
 
+      console.log(`buildCategoryTree: Built tree with ${roots.length} root categories`);
       return roots;
     } catch (error) {
       console.error('Error building category tree:', error);
@@ -438,18 +546,23 @@ const CategoryManagement: React.FC = () => {
 
   const flattenCategories = (cats: Category[], level = 0): (Category & { level: number })[] => {
     try {
-      if (!Array.isArray(cats)) return [];
+      if (!Array.isArray(cats)) {
+        console.log('flattenCategories: cats is not an array');
+        return [];
+      }
       
       let result: (Category & { level: number })[] = [];
       
       const sortedCats = [...cats].sort((a, b) => {
-        const orderA = a?.displayOrder || 0;
-        const orderB = b?.displayOrder || 0;
+        if (!a || !b) return 0;
+        
+        const orderA = a.displayOrder || 0;
+        const orderB = b.displayOrder || 0;
         
         if (orderA !== orderB) {
           return orderA - orderB;
         }
-        return (a?.name || '').localeCompare(b?.name || '');
+        return (a.name || '').localeCompare(b.name || '');
       });
       
       sortedCats.forEach(cat => {
@@ -469,14 +582,23 @@ const CategoryManagement: React.FC = () => {
     }
   };
 
-  // Safe data processing
+  // Safe data processing with comprehensive error handling
   const processedData = React.useMemo(() => {
     try {
+      console.log('Processing category data...');
+      
       const treeCategories = buildCategoryTree(categories);
       const flatCategories = flattenCategories(treeCategories);
       const filteredCategories = showDeleted 
         ? flatCategories 
         : flatCategories.filter(cat => !cat?.isDeleted);
+      
+      console.log('Data processing completed:', {
+        totalCategories: categories.length,
+        treeCategories: treeCategories.length,
+        flatCategories: flatCategories.length,
+        filteredCategories: filteredCategories.length
+      });
       
       return {
         treeCategories,
@@ -493,7 +615,7 @@ const CategoryManagement: React.FC = () => {
     }
   }, [categories, showDeleted]);
 
-  // Safe image URL getter using config utilities
+  // Safe image URL getter
   const getImageUrl = (category: Category): string | null => {
     try {
       if (!category?.image) return null;
@@ -504,7 +626,7 @@ const CategoryManagement: React.FC = () => {
     }
   };
 
-  // Safe table columns with error boundaries
+  // Enhanced table columns with better error handling
   const columns = [
     {
       title: 'Name',
@@ -675,6 +797,7 @@ const CategoryManagement: React.FC = () => {
                     size="small"
                     icon={<UndoOutlined />}
                     onClick={() => restoreMutation.mutate(record._id)}
+                    loading={restoreMutation.isPending}
                   />
                 </Tooltip>
               ) : (
@@ -689,6 +812,7 @@ const CategoryManagement: React.FC = () => {
                     size="small"
                     danger
                     icon={<DeleteOutlined />}
+                    loading={deleteMutation.isPending}
                   />
                 </Popconfirm>
               )}
@@ -702,7 +826,7 @@ const CategoryManagement: React.FC = () => {
     }
   ];
 
-  // Show error state
+  // Enhanced error state
   if (error) {
     return (
       <div className="p-6">
@@ -712,9 +836,14 @@ const CategoryManagement: React.FC = () => {
           type="error"
           showIcon
           action={
-            <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['categories'] })}>
-              Retry
-            </Button>
+            <Space>
+              <Button onClick={() => refetch()} icon={<ReloadOutlined />}>
+                Retry
+              </Button>
+              <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['categories'] })}>
+                Clear Cache & Retry
+              </Button>
+            </Space>
           }
         />
       </div>
@@ -741,30 +870,41 @@ const CategoryManagement: React.FC = () => {
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => handleModalOpen()}
+              disabled={isLoading}
             >
               Add Category
+            </Button>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => refetch()}
+              loading={isLoading}
+            >
+              Refresh
             </Button>
           </Space>
         </div>
 
-        <Table
-          columns={columns}
-          dataSource={processedData.filteredCategories}
-          loading={isLoading}
-          rowKey={(record) => record?._id || Math.random().toString()}
-          pagination={{
-            pageSize: 20,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total, range) =>
-              `${range[0]}-${range[1]} of ${total} categories`
-          }}
-          scroll={{ x: 1200 }}
-          size="small"
-          locale={{
-            emptyText: isLoading ? 'Loading...' : 'No categories found'
-          }}
-        />
+        <Spin spinning={isLoading} tip="Loading categories...">
+          <Table
+            columns={columns}
+            dataSource={processedData.filteredCategories}
+            loading={isLoading}
+            rowKey={(record) => record?._id || Math.random().toString()}
+            pagination={{
+              pageSize: 20,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) =>
+                `${range[0]}-${range[1]} of ${total} categories`,
+              position: ['bottomCenter']
+            }}
+            scroll={{ x: 1200 }}
+            size="small"
+            locale={{
+              emptyText: isLoading ? 'Loading...' : 'No categories found'
+            }}
+          />
+        </Spin>
 
         <Modal
           title={editingCategory ? 'Edit Category' : 'Add New Category'}
@@ -792,7 +932,8 @@ const CategoryManagement: React.FC = () => {
                 label="Category Name"
                 rules={[
                   { required: true, message: 'Please enter category name' },
-                  { max: 50, message: 'Name cannot exceed 50 characters' }
+                  { max: 50, message: 'Name cannot exceed 50 characters' },
+                  { min: 2, message: 'Name must be at least 2 characters' }
                 ]}
               >
                 <Input placeholder="Enter category name" maxLength={50} />
@@ -832,6 +973,7 @@ const CategoryManagement: React.FC = () => {
               >
                 <InputNumber 
                   min={0} 
+                  max={999}
                   placeholder="0"
                   style={{ width: '100%' }}
                 />
@@ -897,7 +1039,7 @@ const CategoryManagement: React.FC = () => {
                 name="metaTitle"
                 label="Meta Title"
               >
-                <Input placeholder="SEO title for this category" maxLength={60} />
+                <Input placeholder="SEO title for this category" maxLength={60} showCount />
               </Form.Item>
 
               <Form.Item
@@ -922,7 +1064,7 @@ const CategoryManagement: React.FC = () => {
 
             <Form.Item className="mb-0 text-right">
               <Space>
-                <Button onClick={handleModalClose}>
+                <Button onClick={handleModalClose} disabled={uploading}>
                   Cancel
                 </Button>
                 <Button

@@ -1,120 +1,185 @@
 // utils/imageService.js
-const { deleteFile, getFileUrl } = require('../middlewares/upload.middleware');
-const sharp = require('sharp'); // Optional: npm install sharp for image processing
+const { deleteFile, getFileUrl, getFallbackImageUrl } = require('../middlewares/upload.middleware');
+const sharp = require('sharp'); // Optional: for image processing
+const path = require('path');
 
 /**
- * Image service that works with existing upload middleware
+ * Enhanced Image Service with comprehensive error handling
  */
-const imageService = {
+class ImageService {
+  constructor() {
+    this.allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+    this.maxFileSize = 10 * 1024 * 1024; // 10MB
+    this.processingOptions = {
+      quality: 85,
+      format: 'jpeg',
+      progressive: true
+    };
+  }
+
   /**
-   * Process uploaded image from multer
-   * @param {Object} file - Multer file object (from req.file)
-   * @param {String} folder - Folder name (already handled by upload middleware)
+   * Process uploaded image from multer (primary method)
+   * @param {Object} file - Multer file object
+   * @param {String} folder - Folder name (for logging/categorization)
    * @param {Object} options - Processing options
    * @returns {Promise<Object>} - Processed image info
    */
-  async uploadImage(file, folder = 'categories', options = {}) {
+  async uploadImage(file, folder = 'uploads', options = {}) {
     try {
+      console.log(`ImageService: Processing upload for folder: ${folder}`);
+      
       if (!file) {
-        throw new Error('No file provided');
+        throw new Error('No file provided to uploadImage');
       }
 
-      // File đã được upload bởi multer middleware
-      // Chỉ cần xử lý thông tin file và trả về kết quả
-      
+      // Validate the file before processing
+      const validation = this.validateImage(file);
+      if (!validation.isValid) {
+        throw new Error(`Image validation failed: ${validation.errors.join(', ')}`);
+      }
+
+      // File has already been uploaded by multer middleware
+      // Extract information and return structured result
       const result = {
         url: this.getImageUrl(file),
         path: this.getImagePath(file),
         originalName: file.originalname,
         size: file.size,
-        contentType: file.mimetype
+        contentType: file.mimetype,
+        uploadedAt: new Date().toISOString(),
+        folder: folder
       };
 
-      console.log('Image upload result:', result);
+      // Validate that we have required fields
+      if (!result.url || !result.path) {
+        throw new Error('Failed to generate image URL or path from uploaded file');
+      }
+
+      console.log('ImageService: Upload processed successfully:', {
+        folder,
+        url: result.url,
+        path: result.path,
+        size: result.size
+      });
+
       return result;
       
     } catch (error) {
-      console.error('Image service error:', error);
+      console.error('ImageService: Upload error:', error);
+      
+      // Clean up file if it was uploaded but processing failed
+      if (file && (file.path || file.key)) {
+        await this.deleteImage(file.path || file.key);
+      }
+      
       throw new Error(`Image upload failed: ${error.message}`);
     }
-  },
+  }
 
   /**
    * Get image URL from uploaded file
    * @param {Object} file - Multer file object
-   * @returns {String} - Image URL
+   * @returns {String|null} - Image URL
    */
   getImageUrl(file) {
-    if (!file) return null;
-
-    // Nếu dùng S3, file.location sẽ có URL đầy đủ
-    if (file.location) {
-      return file.location;
-    }
-
-    // Nếu dùng local storage, sử dụng getFileUrl từ upload middleware
-    if (file.path) {
-      const url = getFileUrl(file.path);
-      // Clean up undefined/null prefixes
-      if (url && typeof url === 'string') {
-        return url.replace(/^(undefined\/|null\/)/, '');
+    try {
+      if (!file) {
+        console.log('ImageService: No file provided to getImageUrl');
+        return null;
       }
-      return url;
-    }
 
-    // Fallback: tạo URL từ filename
-    if (file.filename) {
-      const url = getFileUrl(file.filename);
-      if (url && typeof url === 'string') {
-        return url.replace(/^(undefined\/|null\/)/, '');
+      // For S3 uploads, file.location contains the full URL
+      if (file.location) {
+        console.log('ImageService: Using S3 location URL:', file.location);
+        return file.location;
       }
-      return url;
-    }
 
-    return null;
-  },
+      // For local uploads, use the upload middleware's getFileUrl function
+      if (file.path) {
+        const url = getFileUrl(file.path);
+        console.log('ImageService: Generated URL from path:', { path: file.path, url });
+        return url;
+      }
+
+      // Fallback to filename
+      if (file.filename) {
+        const url = getFileUrl(file.filename);
+        console.log('ImageService: Generated URL from filename:', { filename: file.filename, url });
+        return url;
+      }
+
+      // Use S3 key if available
+      if (file.key) {
+        const url = getFileUrl(file.key);
+        console.log('ImageService: Generated URL from S3 key:', { key: file.key, url });
+        return url;
+      }
+
+      console.log('ImageService: No valid path found in file object:', Object.keys(file));
+      return null;
+    } catch (error) {
+      console.error('ImageService: Error generating image URL:', error);
+      return null;
+    }
+  }
 
   /**
    * Get image storage path from uploaded file
    * @param {Object} file - Multer file object  
-   * @returns {String} - Storage path/key
+   * @returns {String|null} - Storage path/key
    */
   getImagePath(file) {
-    if (!file) return null;
+    try {
+      if (!file) {
+        console.log('ImageService: No file provided to getImagePath');
+        return null;
+      }
 
-    // Cho S3: sử dụng key
-    if (file.key) {
-      return file.key;
+      // Priority order: key (S3) > path (local) > filename (fallback)
+      const pathOptions = [file.key, file.path, file.filename];
+      
+      for (const pathOption of pathOptions) {
+        if (pathOption) {
+          console.log('ImageService: Using path option:', pathOption);
+          return pathOption;
+        }
+      }
+
+      console.log('ImageService: No valid path found in file object');
+      return null;
+    } catch (error) {
+      console.error('ImageService: Error getting image path:', error);
+      return null;
     }
-
-    // Cho local storage: sử dụng path hoặc filename
-    if (file.path) {
-      return file.path;
-    }
-
-    if (file.filename) {
-      return file.filename;
-    }
-
-    return null;
-  },
+  }
 
   /**
-   * Delete image using existing deleteFile function
+   * Delete image using the upload middleware's deleteFile function
    * @param {String} imagePath - Image path/URL to delete
    * @returns {Promise<Boolean>} - Success status
    */
   async deleteImage(imagePath) {
     try {
-      if (!imagePath) return true;
+      if (!imagePath) {
+        console.log('ImageService: No image path provided for deletion');
+        return true; // Consider it successful if no path provided
+      }
 
-      await deleteFile(imagePath);
-      return true;
+      console.log('ImageService: Attempting to delete image:', imagePath);
+      const result = await deleteFile(imagePath);
+      
+      if (result) {
+        console.log('ImageService: Successfully deleted image:', imagePath);
+      } else {
+        console.log('ImageService: Failed to delete image:', imagePath);
+      }
+      
+      return result;
     } catch (error) {
-      console.error('Delete image error:', error);
+      console.error('ImageService: Delete image error:', error);
       return false;
     }
-  },
+  }
 
   /**
    * Validate uploaded image file
@@ -123,116 +188,256 @@ const imageService = {
    */
   validateImage(file) {
     const errors = [];
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
-    const maxSize = 10 * 1024 * 1024; // 10MB
 
-    if (!file) {
-      errors.push('No file provided');
-      return { isValid: false, errors };
-    }
-
-    if (!allowedTypes.includes(file.mimetype)) {
-      errors.push('Invalid file type. Only JPEG, PNG, WebP and GIF are allowed');
-    }
-
-    if (file.size > maxSize) {
-      errors.push('File size too large. Maximum size is 10MB');
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-      fileInfo: {
-        originalName: file.originalname,
-        size: file.size,
-        type: file.mimetype
+    try {
+      if (!file) {
+        errors.push('No file provided');
+        return { isValid: false, errors };
       }
-    };
-  },
+
+      // Check file type
+      if (!this.allowedTypes.includes(file.mimetype)) {
+        errors.push(`Invalid file type: ${file.mimetype}. Allowed types: ${this.allowedTypes.join(', ')}`);
+      }
+
+      // Check file size
+      if (file.size > this.maxFileSize) {
+        errors.push(`File too large: ${(file.size / (1024 * 1024)).toFixed(2)}MB. Maximum size: ${this.maxFileSize / (1024 * 1024)}MB`);
+      }
+
+      // Check filename
+      if (!file.originalname || file.originalname.trim() === '') {
+        errors.push('Invalid filename');
+      }
+
+      // Check for dangerous file extensions
+      const ext = path.extname(file.originalname).toLowerCase();
+      const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'];
+      if (!allowedExtensions.includes(ext)) {
+        errors.push(`Invalid file extension: ${ext}. Allowed extensions: ${allowedExtensions.join(', ')}`);
+      }
+
+      const result = {
+        isValid: errors.length === 0,
+        errors,
+        fileInfo: {
+          originalName: file.originalname,
+          size: file.size,
+          type: file.mimetype,
+          extension: ext
+        }
+      };
+
+      if (result.isValid) {
+        console.log('ImageService: File validation passed:', result.fileInfo);
+      } else {
+        console.log('ImageService: File validation failed:', { errors, fileInfo: result.fileInfo });
+      }
+
+      return result;
+    } catch (error) {
+      console.error('ImageService: Validation error:', error);
+      return {
+        isValid: false,
+        errors: ['Validation error occurred'],
+        fileInfo: null
+      };
+    }
+  }
 
   /**
-   * Process image with Sharp (optional enhancement)
+   * Get display URL for an image path from database
+   * @param {String} imagePath - Image path stored in database
+   * @returns {String|null} - Full image URL for display
+   */
+  getDisplayUrl(imagePath) {
+    try {
+      if (!imagePath) {
+        console.log('ImageService: No image path provided to getDisplayUrl');
+        return null;
+      }
+
+      // If already a complete URL, return as is
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        return imagePath;
+      }
+
+      // Use the upload middleware's getFileUrl function
+      const url = getFileUrl(imagePath);
+      console.log('ImageService: Generated display URL:', { path: imagePath, url });
+      return url;
+    } catch (error) {
+      console.error('ImageService: Error generating display URL:', error);
+      return getFallbackImageUrl();
+    }
+  }
+
+  /**
+   * Get fallback image URL when image is not available
+   * @returns {String} - Fallback image URL
+   */
+  getFallbackUrl() {
+    return getFallbackImageUrl();
+  }
+
+  /**
+   * Process multiple uploaded images
+   * @param {Array} files - Array of multer file objects
+   * @param {String} folder - Folder name
+   * @param {Object} options - Processing options
+   * @returns {Promise<Array>} - Array of processed image info
+   */
+  async uploadMultipleImages(files, folder = 'uploads', options = {}) {
+    try {
+      if (!files || !Array.isArray(files) || files.length === 0) {
+        console.log('ImageService: No files provided to uploadMultipleImages');
+        return [];
+      }
+
+      console.log(`ImageService: Processing ${files.length} images for folder: ${folder}`);
+
+      const results = [];
+      const errors = [];
+
+      for (let i = 0; i < files.length; i++) {
+        try {
+          const result = await this.uploadImage(files[i], folder, options);
+          results.push({
+            ...result,
+            index: i,
+            isDefault: i === 0 // First image is default
+          });
+        } catch (error) {
+          console.error(`ImageService: Failed to process image ${i}:`, error);
+          errors.push({
+            index: i,
+            filename: files[i]?.originalname || 'unknown',
+            error: error.message
+          });
+        }
+      }
+
+      if (errors.length > 0) {
+        console.log('ImageService: Some images failed to process:', errors);
+        
+        // If all images failed, throw an error
+        if (results.length === 0) {
+          throw new Error(`All images failed to process: ${errors.map(e => e.error).join(', ')}`);
+        }
+        
+        // If some images failed, log warning but continue
+        console.warn(`ImageService: ${errors.length} out of ${files.length} images failed to process`);
+      }
+
+      console.log(`ImageService: Successfully processed ${results.length} out of ${files.length} images`);
+      return results;
+    } catch (error) {
+      console.error('ImageService: Multiple upload error:', error);
+      throw new Error(`Multiple image upload failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process image with Sharp (optional image optimization)
    * @param {Buffer} buffer - Image buffer
    * @param {Object} options - Processing options
    * @returns {Promise<Buffer>} - Processed image buffer
    */
-  async processImage(buffer, options = {}) {
+  async processImageBuffer(buffer, options = {}) {
     try {
-      // Chỉ xử lý nếu Sharp có sẵn
+      // Only process if Sharp is available
       if (!sharp) {
-        console.log('Sharp not available, returning original buffer');
+        console.log('ImageService: Sharp not available, returning original buffer');
         return buffer;
       }
 
       const {
-        width = 800,
-        height = 600,
-        quality = 85,
-        format = 'jpeg'
+        width = 1200,
+        height = 1200,
+        quality = this.processingOptions.quality,
+        format = this.processingOptions.format,
+        progressive = this.processingOptions.progressive
       } = options;
+
+      console.log('ImageService: Processing image buffer with Sharp');
 
       const processedBuffer = await sharp(buffer)
         .resize(width, height, {
           fit: 'inside',
           withoutEnlargement: true
         })
-        .jpeg({ quality })
+        .jpeg({ 
+          quality,
+          progressive 
+        })
         .toBuffer();
 
+      console.log('ImageService: Image buffer processed successfully');
       return processedBuffer;
     } catch (error) {
-      console.error('Image processing error:', error);
-      return buffer; // Return original if processing fails
-    }
-  },
-
-  /**
-   * Get full image URL for display
-   * @param {String} imagePath - Image path from database
-   * @returns {String} - Full image URL
-   */
-  getDisplayUrl(imagePath) {
-    if (!imagePath) return null;
-
-    // Nếu đã là URL đầy đủ, return luôn
-    if (imagePath.startsWith('http')) {
-      return imagePath;
-    }
-
-    // Sử dụng getFileUrl từ upload middleware
-    return getFileUrl(imagePath);
-  },
-
-  /**
-   * Create thumbnail from uploaded image (optional)
-   * @param {Object} file - Original uploaded file
-   * @param {Number} size - Thumbnail size
-   * @returns {Promise<String>} - Thumbnail URL
-   */
-  async createThumbnail(file, size = 150) {
-    try {
-      if (!sharp || !file.buffer) {
-        return this.getImageUrl(file); // Return original if can't process
-      }
-
-      // Create thumbnail buffer
-      const thumbnailBuffer = await sharp(file.buffer)
-        .resize(size, size, {
-          fit: 'cover',
-          position: 'center'
-        })
-        .jpeg({ quality: 80 })
-        .toBuffer();
-
-      // Here you could save the thumbnail separately if needed
-      // For now, just return the original URL
-      return this.getImageUrl(file);
-      
-    } catch (error) {
-      console.error('Thumbnail creation error:', error);
-      return this.getImageUrl(file);
+      console.error('ImageService: Image processing error:', error);
+      return buffer; // Return original buffer if processing fails
     }
   }
-};
+
+  /**
+   * Generate thumbnail URL (placeholder for future implementation)
+   * @param {String} imagePath - Original image path
+   * @param {Number} size - Thumbnail size
+   * @returns {String} - Thumbnail URL (currently returns original)
+   */
+  getThumbnailUrl(imagePath, size = 150) {
+    try {
+      // For now, return the original image URL
+      // In the future, this could generate actual thumbnails
+      return this.getDisplayUrl(imagePath);
+    } catch (error) {
+      console.error('ImageService: Thumbnail generation error:', error);
+      return this.getFallbackUrl();
+    }
+  }
+
+  /**
+   * Cleanup multiple images
+   * @param {Array} imagePaths - Array of image paths to delete
+   * @returns {Promise<Object>} - Cleanup results
+   */
+  async cleanupImages(imagePaths) {
+    try {
+      if (!imagePaths || !Array.isArray(imagePaths)) {
+        return { success: 0, failed: 0, total: 0 };
+      }
+
+      console.log(`ImageService: Cleaning up ${imagePaths.length} images`);
+
+      let success = 0;
+      let failed = 0;
+
+      for (const imagePath of imagePaths) {
+        try {
+          const result = await this.deleteImage(imagePath);
+          if (result) {
+            success++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          console.error(`ImageService: Failed to cleanup image ${imagePath}:`, error);
+          failed++;
+        }
+      }
+
+      const results = { success, failed, total: imagePaths.length };
+      console.log('ImageService: Cleanup completed:', results);
+      return results;
+    } catch (error) {
+      console.error('ImageService: Cleanup error:', error);
+      return { success: 0, failed: imagePaths?.length || 0, total: imagePaths?.length || 0 };
+    }
+  }
+}
+
+// Create singleton instance
+const imageService = new ImageService();
 
 module.exports = imageService;

@@ -1,4 +1,3 @@
-// routes/api/products.routes.js
 const express = require('express');
 const router = express.Router();
 const productController = require('../../controllers/product.controller');
@@ -20,12 +19,12 @@ router.get('/best-selling', productController.getBestSellingProducts);
 router.get('/', optionalAuth, productController.getProducts);
 router.get('/:id', optionalAuth, productController.getProduct);
 
-// Admin/Staff product routes with proper upload middleware
+// Admin/Staff product routes with multiple image upload
 router.post(
   '/', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadProductImages, // Uses uploadMultiple('images', 10)
+  uploadProductImages, // Multiple images upload for products
   productController.createProduct
 );
 
@@ -33,7 +32,7 @@ router.put(
   '/:id', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadProductImages, // Uses uploadMultiple('images', 10)
+  uploadProductImages, // Multiple images upload for products
   productController.updateProduct
 );
 
@@ -51,7 +50,7 @@ router.put(
   productController.restoreProduct
 );
 
-// Product Variant routes with proper upload middleware
+// Product Variant routes with multiple image upload
 router.get(
   '/:productId/variants', 
   productVariantController.getProductVariants
@@ -66,7 +65,7 @@ router.post(
   '/:productId/variants', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadVariantImages, // Uses uploadMultiple('images', 5)
+  uploadVariantImages, // Multiple images upload for variants
   productVariantController.createProductVariant
 );
 
@@ -74,7 +73,7 @@ router.put(
   '/:productId/variants/:id', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadVariantImages, // Uses uploadMultiple('images', 5)
+  uploadVariantImages, // Multiple images upload for variants
   productVariantController.updateProductVariant
 );
 
@@ -85,7 +84,6 @@ router.delete(
   productVariantController.deleteProductVariant
 );
 
-// Add restore route for variants
 router.put(
   '/:productId/variants/:id/restore', 
   protect, 
@@ -93,7 +91,7 @@ router.put(
   productVariantController.restoreProductVariant
 );
 
-// Product Customization routes with proper upload middleware
+// Product Customization routes with multiple image upload
 router.get(
   '/:productId/customizations', 
   productCustomizationController.getProductCustomizations
@@ -108,7 +106,7 @@ router.post(
   '/:productId/customizations', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadCustomizationImages, // Uses uploadMultiple('optionImages', 10)
+  uploadCustomizationImages, // Multiple images upload for customizations
   productCustomizationController.createProductCustomization
 );
 
@@ -116,7 +114,7 @@ router.put(
   '/:productId/customizations/:id', 
   protect, 
   authorize('admin', 'staff'), 
-  uploadCustomizationImages, // Uses uploadMultiple('optionImages', 10)
+  uploadCustomizationImages, // Multiple images upload for customizations
   productCustomizationController.updateProductCustomization
 );
 
@@ -127,7 +125,7 @@ router.delete(
   productCustomizationController.deleteProductCustomization
 );
 
-// Product Reviews routes with proper upload middleware
+// Product Reviews routes with multiple image upload
 router.get(
   '/:productId/reviews', 
   reviewController.getProductReviews
@@ -137,7 +135,7 @@ router.post(
   '/:productId/reviews', 
   protect, 
   authorize('customer'), 
-  uploadReviewImages, // Uses uploadMultiple('images', 5)
+  uploadReviewImages, // Multiple images upload for reviews
   reviewController.createReview
 );
 
@@ -145,7 +143,7 @@ router.put(
   '/:productId/reviews/:id', 
   protect, 
   authorize('customer'), 
-  uploadReviewImages, // Uses uploadMultiple('images', 5)
+  uploadReviewImages, // Multiple images upload for reviews
   reviewController.updateReview
 );
 

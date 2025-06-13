@@ -38,22 +38,22 @@ exports.getProducts = asyncHandler(async (req, res) => {
   // Category filter - support both ID and slug
   if (category) {
     let categoryObj;
-    
+
     // Check if category is an ID or slug
     if (mongoose.Types.ObjectId.isValid(category)) {
       categoryObj = await Category.findById(category);
     } else {
       categoryObj = await Category.findOne({ slug: category });
     }
-    
+
     if (categoryObj) {
       // Get all subcategories
       const subcategories = await Category.find({ parentId: categoryObj._id });
       const categoryIds = [
-        categoryObj._id, 
+        categoryObj._id,
         ...subcategories.map(subcat => subcat._id)
       ];
-      
+
       query.categoryId = { $in: categoryIds };
     }
   }
@@ -106,13 +106,13 @@ exports.getProducts = asyncHandler(async (req, res) => {
   // Check for active flash sales on these products
   const productIds = products.docs.map(product => product._id);
   const now = new Date();
-  
+
   const flashSaleItems = await FlashSaleItem.find({
     productId: { $in: productIds },
     isActive: true
   }).populate({
     path: 'flashSaleId',
-    match: { 
+    match: {
       startDate: { $lte: now },
       endDate: { $gte: now },
       status: 'active',
@@ -123,11 +123,11 @@ exports.getProducts = asyncHandler(async (req, res) => {
   // Map flash sale data to products
   const productsWithFlashSale = products.docs.map(product => {
     const productObj = product.toObject();
-    
+
     const flashSaleItem = flashSaleItems.find(
       item => item.productId.toString() === productObj._id.toString() && item.flashSaleId
     );
-    
+
     if (flashSaleItem) {
       productObj.flashSale = {
         discountPercent: flashSaleItem.discountPercent,
@@ -136,10 +136,10 @@ exports.getProducts = asyncHandler(async (req, res) => {
         endDate: flashSaleItem.flashSaleId.endDate
       };
     }
-    
+
     return productObj;
   });
-  
+
   // Format the response
   return ApiResponse.success(res, {
     products: productsWithFlashSale,
@@ -153,84 +153,16 @@ exports.getProducts = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc    Get a single product by ID or slug
+ * @desc    Get single product
  * @route   GET /api/products/:id
  * @access  Public
  */
 exports.getProduct = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  let product;
-
-  // Check if id is a valid ObjectId or a slug
-  if (mongoose.Types.ObjectId.isValid(id)) {
-    product = await Product.findById(id);
-  } else {
-    product = await Product.findOne({ slug: id });
-  }
-
-  if (!product || product.isDeleted) {
+  const product = await Product.findById(req.params.id);
+  if (!product) {
     throw new ApiError('Product not found', 404);
   }
-
-  // Populate related data
-  await product.populate([
-    { path: 'categoryId', select: 'name slug parentId' },
-    { path: 'variants' }
-  ]);
-
-  // Get reviews
-  const reviews = await Review.find({ 
-    productId: product._id, 
-    isApproved: true,
-    isDeleted: false 
-  })
-  .sort('-createdAt')
-  .limit(5)
-  .populate('userId', 'firstName lastName username');
-
-  // Check for active flash sale
-  const now = new Date();
-  const flashSaleItem = await FlashSaleItem.findOne({
-    productId: product._id,
-    isActive: true
-  }).populate({
-    path: 'flashSaleId',
-    match: { 
-      startDate: { $lte: now },
-      endDate: { $gte: now },
-      status: 'active',
-      isActive: true
-    }
-  });
-
-  // Convert to plain object for modifications
-  const productObj = product.toObject();
-  
-  // Add reviews
-  productObj.reviews = reviews;
-  
-  // Add flash sale data if available
-  if (flashSaleItem && flashSaleItem.flashSaleId) {
-    productObj.flashSale = {
-      discountPercent: flashSaleItem.discountPercent,
-      discountedPrice: flashSaleItem.discountedPrice,
-      flashSaleId: flashSaleItem.flashSaleId._id,
-      endDate: flashSaleItem.flashSaleId.endDate
-    };
-  }
-
-  // Get related products from same category
-  const relatedProducts = await Product.find({ 
-    categoryId: product.categoryId._id,
-    _id: { $ne: product._id },
-    isDeleted: false
-  })
-  .select('name slug basePrice images averageRating')
-  .limit(4);
-  
-  productObj.relatedProducts = relatedProducts;
-
-  return ApiResponse.success(res, { product: productObj });
+  return ApiResponse.success(res, { product });
 });
 
 /**
@@ -239,18 +171,18 @@ exports.getProduct = asyncHandler(async (req, res) => {
  * @access  Private (Admin, Staff)
  */
 exports.createProduct = asyncHandler(async (req, res) => {
-  console.log('Create product - received data:', {
-    body: req.body,
-    files: req.files ? req.files.map(f => ({
-      fieldname: f.fieldname,
-      originalname: f.originalname,
-      mimetype: f.mimetype,
-      size: f.size,
-      key: f.key,
-      location: f.location,
-      path: f.path
-    })) : null
-  });
+  console.log('=== CREATE PRODUCT START ===');
+  console.log('Request body:', req.body);
+  console.log('Uploaded files:', req.files ? req.files.map(f => ({
+    fieldname: f.fieldname,
+    originalname: f.originalname,
+    mimetype: f.mimetype,
+    size: f.size,
+    filename: f.filename,
+    path: f.path,
+    key: f.key,
+    location: f.location
+  })) : 'No files uploaded');
 
   const {
     name,
@@ -268,18 +200,30 @@ exports.createProduct = asyncHandler(async (req, res) => {
   } = req.body;
 
   // Validate required fields
-  if (!name || !description || !categoryId || !basePrice || !sku) {
-    throw new ApiError('Please provide all required fields', 400);
+  if (!name || name.trim() === '') {
+    throw new ApiError('Product name is required', 400);
+  }
+  if (!description || description.trim() === '') {
+    throw new ApiError('Product description is required', 400);
+  }
+  if (!categoryId) {
+    throw new ApiError('Category is required', 400);
+  }
+  if (!basePrice || isNaN(parseFloat(basePrice))) {
+    throw new ApiError('Valid base price is required', 400);
+  }
+  if (!sku || sku.trim() === '') {
+    throw new ApiError('SKU is required', 400);
   }
 
   // Validate category exists
   const category = await Category.findById(categoryId);
-  if (!category) {
+  if (!category || category.isDeleted) {
     throw new ApiError('Category not found', 404);
   }
 
   // Check if SKU is unique
-  const existingSku = await Product.findOne({ sku });
+  const existingSku = await Product.findOne({ sku: sku.trim(), isDeleted: false });
   if (existingSku) {
     throw new ApiError('SKU already exists', 400);
   }
@@ -287,17 +231,19 @@ exports.createProduct = asyncHandler(async (req, res) => {
   // Process tags if provided as a string
   let processedTags = tags;
   if (typeof tags === 'string') {
-    processedTags = tags.split(',').map(tag => tag.trim());
+    processedTags = tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
+  } else if (!Array.isArray(tags)) {
+    processedTags = [];
   }
 
-  // Create product object
+  // Create product object with proper type conversions
   const productData = {
-    name,
-    description,
+    name: name.trim(),
+    description: description.trim(),
     categoryId,
-    basePrice: Number(basePrice),
-    sku,
-    stockQuantity: stockQuantity ? Number(stockQuantity) : 0,
+    basePrice: parseFloat(basePrice),
+    sku: sku.trim(),
+    stockQuantity: stockQuantity ? parseInt(stockQuantity, 10) : 0,
     isCustomizable: isCustomizable === 'true' || isCustomizable === true,
     tags: processedTags || [],
     featured: featured === 'true' || featured === true,
@@ -307,86 +253,88 @@ exports.createProduct = asyncHandler(async (req, res) => {
   // Add dimensions if provided
   if (dimensions) {
     try {
-      productData.dimensions = typeof dimensions === 'string' 
-        ? JSON.parse(dimensions) 
+      productData.dimensions = typeof dimensions === 'string'
+        ? JSON.parse(dimensions)
         : dimensions;
     } catch (error) {
-      throw new ApiError('Invalid dimensions format', 400);
+      throw new ApiError('Invalid dimensions format. Must be valid JSON.', 400);
     }
   }
 
   // Add weight if provided
   if (weight) {
-    productData.weight = Number(weight);
+    const weightNum = parseFloat(weight);
+    if (isNaN(weightNum)) {
+      throw new ApiError('Invalid weight format. Must be a number.', 400);
+    }
+    productData.weight = weightNum;
   }
+
+  console.log('Product data prepared:', productData);
 
   // Handle multiple image uploads
   if (req.files && req.files.length > 0) {
-    const images = [];
-    
-    console.log(`Processing ${req.files.length} uploaded images...`);
-    
-    for (let i = 0; i < req.files.length; i++) {
-      const file = req.files[i];
-      
-      try {
-        // Validate each image
-        const validation = imageService.validateImage(file);
-        if (!validation.isValid) {
-          throw new ApiError(`Image ${i + 1} validation failed: ${validation.errors.join(', ')}`, 400);
-        }
+    try {
+      console.log(`Processing ${req.files.length} product images...`);
 
-        // Process image using imageService
-        const result = await imageService.uploadImage(file, 'products');
-        
-        images.push({
-          url: result.url,
-          path: result.path,
-          altText: name,
-          isDefault: i === 0, // First image is default
-          sortOrder: i
-        });
-        
-        console.log(`Image ${i + 1} processed successfully:`, {
-          url: result.url,
-          path: result.path
-        });
-        
-      } catch (error) {
-        console.error(`Image ${i + 1} upload error:`, error);
-        
-        // Clean up previously uploaded images if any fail
-        for (const uploadedImage of images) {
-          await imageService.deleteImage(uploadedImage.path);
-        }
-        
-        throw new ApiError(`Image ${i + 1} upload failed: ${error.message}`, 500);
-      }
+      // Use imageService to process multiple images
+      const imageResults = await imageService.uploadMultipleImages(req.files, 'products');
+
+      // Transform results to match the expected format
+      productData.images = imageResults.map((result, index) => ({
+        url: result.url,
+        path: result.path,
+        altText: name.trim(),
+        isDefault: index === 0, // First image is default
+        sortOrder: index
+      }));
+
+      console.log(`All ${productData.images.length} product images processed successfully`);
+
+    } catch (error) {
+      console.error('Product images upload error:', error);
+      throw new ApiError(`Image upload failed: ${error.message}`, 400);
     }
-    
-    productData.images = images;
-    console.log(`All ${images.length} images processed successfully`);
   }
 
   try {
     // Create the product
+    console.log('Creating product in database...');
     const product = await Product.create(productData);
-    
+
     console.log('Product created successfully:', {
       id: product._id,
       name: product.name,
+      sku: product.sku,
       imagesCount: product.images?.length || 0
     });
 
+    console.log('=== CREATE PRODUCT SUCCESS ===');
     return ApiResponse.created(res, { product });
+
   } catch (error) {
-    // If product creation fails and we uploaded images, clean them up
+    console.error('Product creation failed:', error);
+
+    // Cleanup uploaded images if product creation fails
     if (productData.images && productData.images.length > 0) {
       console.log('Cleaning up uploaded images due to product creation failure...');
-      for (const image of productData.images) {
-        await imageService.deleteImage(image.path);
-      }
+      const imagePaths = productData.images.map(img => img.path);
+      await imageService.cleanupImages(imagePaths);
     }
+
+    // Handle mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      throw new ApiError(`Validation failed: ${validationErrors.join(', ')}`, 400);
+    }
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      throw new ApiError(`${field} already exists`, 400);
+    }
+
+    console.log('=== CREATE PRODUCT FAILED ===');
     throw error;
   }
 });
@@ -398,20 +346,20 @@ exports.createProduct = asyncHandler(async (req, res) => {
  */
 exports.updateProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  
-  console.log('Update product - received data:', {
-    id,
-    body: req.body,
-    files: req.files ? req.files.map(f => ({
-      fieldname: f.fieldname,
-      originalname: f.originalname,
-      mimetype: f.mimetype,
-      size: f.size,
-      key: f.key,
-      location: f.location,
-      path: f.path
-    })) : null
-  });
+
+  console.log('=== UPDATE PRODUCT START ===');
+  console.log('Product ID:', id);
+  console.log('Request body:', req.body);
+  console.log('Uploaded files:', req.files ? req.files.map(f => ({
+    fieldname: f.fieldname,
+    originalname: f.originalname,
+    mimetype: f.mimetype,
+    size: f.size,
+    filename: f.filename,
+    path: f.path,
+    key: f.key,
+    location: f.location
+  })) : 'No files uploaded');
 
   const {
     name,
@@ -435,17 +383,28 @@ exports.updateProduct = asyncHandler(async (req, res) => {
     throw new ApiError('Product not found', 404);
   }
 
+  console.log('Found product:', {
+    id: product._id,
+    name: product.name,
+    sku: product.sku,
+    currentImagesCount: product.images?.length || 0
+  });
+
   // Validate category if provided
   if (categoryId) {
     const category = await Category.findById(categoryId);
-    if (!category) {
+    if (!category || category.isDeleted) {
       throw new ApiError('Category not found', 404);
     }
   }
 
   // Check SKU uniqueness if changed
-  if (sku && sku !== product.sku) {
-    const existingSku = await Product.findOne({ sku, _id: { $ne: id } });
+  if (sku && sku.trim() !== product.sku) {
+    const existingSku = await Product.findOne({
+      sku: sku.trim(),
+      _id: { $ne: id },
+      isDeleted: false
+    });
     if (existingSku) {
       throw new ApiError('SKU already exists', 400);
     }
@@ -454,45 +413,61 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   // Process tags if provided
   let processedTags = tags;
   if (typeof tags === 'string') {
-    processedTags = tags.split(',').map(tag => tag.trim());
+    processedTags = tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
   }
 
   // Create update object
   const updateData = {};
-  
-  // Update fields if provided
-  if (name) updateData.name = name;
-  if (description) updateData.description = description;
-  if (categoryId) updateData.categoryId = categoryId;
-  if (basePrice) updateData.basePrice = Number(basePrice);
-  if (sku) updateData.sku = sku;
-  if (stockQuantity !== undefined) updateData.stockQuantity = Number(stockQuantity);
+
+  // Update fields if provided with proper type conversions
+  if (name !== undefined) updateData.name = name.trim();
+  if (description !== undefined) updateData.description = description.trim();
+  if (categoryId !== undefined) updateData.categoryId = categoryId;
+  if (basePrice !== undefined) {
+    const price = parseFloat(basePrice);
+    if (isNaN(price)) {
+      throw new ApiError('Invalid base price format', 400);
+    }
+    updateData.basePrice = price;
+  }
+  if (sku !== undefined) updateData.sku = sku.trim();
+  if (stockQuantity !== undefined) updateData.stockQuantity = parseInt(stockQuantity, 10);
   if (isCustomizable !== undefined) {
     updateData.isCustomizable = isCustomizable === 'true' || isCustomizable === true;
   }
-  if (processedTags) updateData.tags = processedTags;
+  if (processedTags !== undefined) updateData.tags = processedTags;
   if (featured !== undefined) {
     updateData.featured = featured === 'true' || featured === true;
   }
-  
+
   // Add other fields
   Object.assign(updateData, otherFields);
 
   // Handle dimensions if provided
-  if (dimensions) {
+  if (dimensions !== undefined) {
     try {
-      updateData.dimensions = typeof dimensions === 'string' 
-        ? JSON.parse(dimensions) 
+      updateData.dimensions = typeof dimensions === 'string'
+        ? JSON.parse(dimensions)
         : dimensions;
     } catch (error) {
-      throw new ApiError('Invalid dimensions format', 400);
+      throw new ApiError('Invalid dimensions format. Must be valid JSON.', 400);
     }
   }
 
   // Handle weight if provided
-  if (weight) {
-    updateData.weight = Number(weight);
+  if (weight !== undefined) {
+    if (weight === '' || weight === null) {
+      updateData.weight = null;
+    } else {
+      const weightNum = parseFloat(weight);
+      if (isNaN(weightNum)) {
+        throw new ApiError('Invalid weight format. Must be a number.', 400);
+      }
+      updateData.weight = weightNum;
+    }
   }
+
+  console.log('Update data prepared:', updateData);
 
   // Store current images for potential cleanup
   const currentImages = product.images || [];
@@ -500,81 +475,64 @@ exports.updateProduct = asyncHandler(async (req, res) => {
 
   // Handle image removal if specified
   if (removeImages) {
-    const imagesToRemove = Array.isArray(removeImages) 
-      ? removeImages 
+    const imagesToRemove = Array.isArray(removeImages)
+      ? removeImages
       : [removeImages];
-    
-    console.log('Removing images:', imagesToRemove);
-    
+
+    console.log('Images to remove:', imagesToRemove);
+
     // Find images to delete
-    imagesToDelete = currentImages.filter(image => 
-      imagesToRemove.includes(image.url) || imagesToRemove.includes(image.path)
+    imagesToDelete = currentImages.filter(image =>
+      imagesToRemove.includes(image.url) ||
+      imagesToRemove.includes(image.path) ||
+      imagesToRemove.includes(image._id?.toString())
     );
-    
+
     // Update the images array (remove specified images)
-    updateData.images = currentImages.filter(image => 
-      !imagesToRemove.includes(image.url) && !imagesToRemove.includes(image.path)
+    updateData.images = currentImages.filter(image =>
+      !imagesToRemove.includes(image.url) &&
+      !imagesToRemove.includes(image.path) &&
+      !imagesToRemove.includes(image._id?.toString())
     );
   }
 
   // Handle new image uploads
   if (req.files && req.files.length > 0) {
-    const newImages = [];
-    
-    console.log(`Processing ${req.files.length} new uploaded images...`);
-    
-    for (let i = 0; i < req.files.length; i++) {
-      const file = req.files[i];
-      
-      try {
-        // Validate each image
-        const validation = imageService.validateImage(file);
-        if (!validation.isValid) {
-          throw new ApiError(`Image ${i + 1} validation failed: ${validation.errors.join(', ')}`, 400);
-        }
+    try {
+      console.log(`Processing ${req.files.length} new product images...`);
 
-        // Process image using imageService
-        const result = await imageService.uploadImage(file, 'products');
-        
-        const existingImagesCount = updateData.images ? updateData.images.length : currentImages.length;
-        
-        newImages.push({
-          url: result.url,
-          path: result.path,
-          altText: name || product.name,
-          isDefault: existingImagesCount === 0 && i === 0, // First image is default if no existing images
-          sortOrder: existingImagesCount + i
-        });
-        
-        console.log(`New image ${i + 1} processed successfully:`, {
-          url: result.url,
-          path: result.path
-        });
-        
-      } catch (error) {
-        console.error(`New image ${i + 1} upload error:`, error);
-        
-        // Clean up any successfully uploaded new images
-        for (const uploadedImage of newImages) {
-          await imageService.deleteImage(uploadedImage.path);
-        }
-        
-        throw new ApiError(`Image ${i + 1} upload failed: ${error.message}`, 500);
+      // Use imageService to process multiple images
+      const imageResults = await imageService.uploadMultipleImages(req.files, 'products');
+
+      const existingImagesCount = updateData.images ? updateData.images.length : currentImages.length;
+
+      // Transform results to match the expected format
+      const newImages = imageResults.map((result, index) => ({
+        url: result.url,
+        path: result.path,
+        altText: name || product.name,
+        isDefault: existingImagesCount === 0 && index === 0, // First image is default if no existing images
+        sortOrder: existingImagesCount + index
+      }));
+
+      // Add new images to existing ones (or to the filtered list if removing images)
+      if (updateData.images) {
+        updateData.images = [...updateData.images, ...newImages];
+      } else {
+        updateData.images = [...currentImages, ...newImages];
       }
+
+      console.log(`All ${newImages.length} new product images processed successfully`);
+
+    } catch (error) {
+      console.error('New product images upload error:', error);
+      throw new ApiError(`Image upload failed: ${error.message}`, 400);
     }
-    
-    // Add new images to existing ones (or to the filtered list if removing images)
-    if (updateData.images) {
-      updateData.images = [...updateData.images, ...newImages];
-    } else {
-      updateData.images = [...currentImages, ...newImages];
-    }
-    
-    console.log(`All ${newImages.length} new images processed successfully`);
   }
 
   try {
     // Update the product
+    console.log('Updating product in database...');
     const updatedProduct = await Product.findByIdAndUpdate(
       id,
       updateData,
@@ -584,36 +542,51 @@ exports.updateProduct = asyncHandler(async (req, res) => {
     // Delete removed images after successful update
     if (imagesToDelete.length > 0) {
       console.log(`Deleting ${imagesToDelete.length} removed images...`);
-      for (const image of imagesToDelete) {
-        try {
-          await imageService.deleteImage(image.path || image.url);
-          console.log('Image deleted successfully:', image.path || image.url);
-        } catch (error) {
-          console.error(`Failed to delete image ${image.path || image.url}:`, error.message);
-          // Continue with other images even if one fails
-        }
-      }
+      const imagePathsToDelete = imagesToDelete.map(img => img.path || img.url);
+      const cleanupResult = await imageService.cleanupImages(imagePathsToDelete);
+      console.log('Image cleanup result:', cleanupResult);
     }
 
     console.log('Product updated successfully:', {
       id: updatedProduct._id,
       name: updatedProduct.name,
+      sku: updatedProduct.sku,
       imagesCount: updatedProduct.images?.length || 0
     });
 
+    console.log('=== UPDATE PRODUCT SUCCESS ===');
     return ApiResponse.success(res, { product: updatedProduct });
+
   } catch (error) {
-    // If update fails and we uploaded new images, clean them up
-    if (req.files && updateData.images) {
-      const newImagePaths = updateData.images
-        .slice(-(req.files.length))
-        .map(img => img.path);
-      
-      console.log('Cleaning up new images due to update failure...');
-      for (const imagePath of newImagePaths) {
-        await imageService.deleteImage(imagePath);
+    console.error('Product update failed:', error);
+
+    // Cleanup newly uploaded images if update fails
+    if (req.files && req.files.length > 0) {
+      console.log('Cleaning up newly uploaded images due to update failure...');
+      const newImageCount = req.files.length;
+
+      if (updateData.images && updateData.images.length >= newImageCount) {
+        const newImagePaths = updateData.images
+          .slice(-newImageCount)
+          .map(img => img.path);
+
+        await imageService.cleanupImages(newImagePaths);
       }
     }
+
+    // Handle mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      throw new ApiError(`Validation failed: ${validationErrors.join(', ')}`, 400);
+    }
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      throw new ApiError(`${field} already exists`, 400);
+    }
+
+    console.log('=== UPDATE PRODUCT FAILED ===');
     throw error;
   }
 });
@@ -649,7 +622,7 @@ exports.restoreProduct = asyncHandler(async (req, res) => {
 
   // Find the product with includeDeleted option
   const product = await Product.findOne({ _id: id, isDeleted: true });
-  
+
   if (!product) {
     throw new ApiError('Deleted product not found', 404);
   }
@@ -675,7 +648,7 @@ exports.searchProducts = asyncHandler(async (req, res) => {
 
   // Search products using text index
   const products = await Product.find(
-    { 
+    {
       $text: { $search: query },
       isDeleted: false
     },
@@ -685,7 +658,7 @@ exports.searchProducts = asyncHandler(async (req, res) => {
     .sort({ score: { $meta: 'textScore' } })
     .limit(parseInt(limit));
 
-  return ApiResponse.success(res, { 
+  return ApiResponse.success(res, {
     products,
     count: products.length,
     query
@@ -700,7 +673,7 @@ exports.searchProducts = asyncHandler(async (req, res) => {
 exports.getFeaturedProducts = asyncHandler(async (req, res) => {
   const { limit = 8 } = req.query;
 
-  const products = await Product.find({ 
+  const products = await Product.find({
     featured: true,
     isDeleted: false,
     stockQuantity: { $gt: 0 }
@@ -709,7 +682,7 @@ exports.getFeaturedProducts = asyncHandler(async (req, res) => {
     .sort('-createdAt')
     .limit(parseInt(limit));
 
-  return ApiResponse.success(res, { 
+  return ApiResponse.success(res, {
     products,
     count: products.length
   });
@@ -725,7 +698,7 @@ exports.getBestSellingProducts = asyncHandler(async (req, res) => {
 
   // In a real implementation, this would be based on OrderItem aggregation
   // For simplicity, we'll use a popularity field for now
-  const products = await Product.find({ 
+  const products = await Product.find({
     isDeleted: false,
     stockQuantity: { $gt: 0 }
   })
@@ -733,7 +706,7 @@ exports.getBestSellingProducts = asyncHandler(async (req, res) => {
     .sort('-popularity -averageRating')
     .limit(parseInt(limit));
 
-  return ApiResponse.success(res, { 
+  return ApiResponse.success(res, {
     products,
     count: products.length
   });

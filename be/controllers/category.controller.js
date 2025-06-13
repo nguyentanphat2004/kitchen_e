@@ -160,18 +160,18 @@ exports.getCategory = asyncHandler(async (req, res) => {
  * @access  Private (Admin, Staff)
  */
 exports.createCategory = asyncHandler(async (req, res) => {
-  console.log('Create category - received data:', {
-    body: req.body,
-    file: req.file ? {
-      fieldname: req.file.fieldname,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      key: req.file.key,
-      location: req.file.location,
-      path: req.file.path
-    } : null
-  });
+  console.log('=== CREATE CATEGORY START ===');
+  console.log('Request body:', req.body);
+  console.log('Uploaded file:', req.file ? {
+    fieldname: req.file.fieldname,
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    filename: req.file.filename,
+    path: req.file.path,
+    key: req.file.key,
+    location: req.file.location
+  } : 'No file uploaded');
 
   const {
     name,
@@ -190,71 +190,90 @@ exports.createCategory = asyncHandler(async (req, res) => {
   } = req.body;
   
   // Validate required fields
-  if (!name) {
+  if (!name || name.trim() === '') {
     throw new ApiError('Category name is required', 400);
   }
   
-  // Create category object
+  // Create category object with proper type conversions
   const categoryData = {
-    name,
-    description: description || '',
-    parentId: parentId === 'null' || parentId === '' ? null : parentId,
+    name: name.trim(),
+    description: description ? description.trim() : '',
+    parentId: (parentId === 'null' || parentId === '' || !parentId) ? null : parentId,
     displayOrder: displayOrder ? parseInt(displayOrder, 10) : 0,
     featured: featured === 'true' || featured === true,
     showInMenu: showInMenu !== 'false' && showInMenu !== false,
     showInHome: showInHome === 'true' || showInHome === true,
     isActive: isActive !== 'false' && isActive !== false,
-    icon: icon || null,
-    metaTitle: metaTitle || name,
-    metaDescription: metaDescription || description || '',
-    metaKeywords: metaKeywords || '',
+    icon: icon ? icon.trim() : null,
+    metaTitle: metaTitle ? metaTitle.trim() : name.trim(),
+    metaDescription: metaDescription ? metaDescription.trim() : (description ? description.trim() : ''),
+    metaKeywords: metaKeywords ? metaKeywords.trim() : '',
     ...otherFields
   };
-  
+
+  console.log('Category data prepared:', categoryData);
+
   // Handle image upload if provided
   if (req.file) {
     try {
-      console.log('Processing uploaded image...');
+      console.log('Processing category image upload...');
       
-      // Validate image
-      const validation = imageService.validateImage(req.file);
-      if (!validation.isValid) {
-        throw new ApiError(`Image validation failed: ${validation.errors.join(', ')}`, 400);
-      }
-
-      // Process image and get URLs
-      const result = await imageService.uploadImage(req.file, 'categories');
+      // Use the imageService to process the uploaded file
+      const imageResult = await imageService.uploadImage(req.file, 'categories');
       
-      categoryData.image = result.url;
-      categoryData.imagePath = result.path;
+      categoryData.image = imageResult.url;
+      categoryData.imagePath = imageResult.path;
       
-      console.log('Image processed successfully:', {
-        url: result.url,
-        path: result.path
+      console.log('Category image processed successfully:', {
+        url: imageResult.url,
+        path: imageResult.path,
+        size: imageResult.size
       });
       
     } catch (error) {
-      console.error('Image upload error:', error);
-      throw new ApiError(`Image upload failed: ${error.message}`, 500);
+      console.error('Category image upload error:', error);
+      throw new ApiError(`Image upload failed: ${error.message}`, 400);
     }
   }
   
   try {
     // Create the category
+    console.log('Creating category in database...');
     const category = await Category.create(categoryData);
     
     console.log('Category created successfully:', {
       id: category._id,
       name: category.name,
-      image: category.image
+      slug: category.slug,
+      image: category.image,
+      imagePath: category.imagePath
     });
     
+    console.log('=== CREATE CATEGORY SUCCESS ===');
     return ApiResponse.created(res, { category });
+    
   } catch (error) {
-    // If category creation fails and we uploaded an image, clean it up
+    console.error('Category creation failed:', error);
+    
+    // Cleanup uploaded image if category creation fails
     if (req.file && categoryData.imagePath) {
+      console.log('Cleaning up uploaded image due to category creation failure...');
       await imageService.deleteImage(categoryData.imagePath);
     }
+    
+    // Handle mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      throw new ApiError(`Validation failed: ${validationErrors.join(', ')}`, 400);
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      throw new ApiError(`${field} already exists`, 400);
+    }
+    
+    console.log('=== CREATE CATEGORY FAILED ===');
     throw error;
   }
 });
@@ -267,19 +286,19 @@ exports.createCategory = asyncHandler(async (req, res) => {
 exports.updateCategory = asyncHandler(async (req, res) => {
   const { id } = req.params;
   
-  console.log('Update category - received data:', {
-    id,
-    body: req.body,
-    file: req.file ? {
-      fieldname: req.file.fieldname,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      key: req.file.key,
-      location: req.file.location,
-      path: req.file.path
-    } : null
-  });
+  console.log('=== UPDATE CATEGORY START ===');
+  console.log('Category ID:', id);
+  console.log('Request body:', req.body);
+  console.log('Uploaded file:', req.file ? {
+    fieldname: req.file.fieldname,
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    filename: req.file.filename,
+    path: req.file.path,
+    key: req.file.key,
+    location: req.file.location
+  } : 'No file uploaded');
 
   const {
     name,
@@ -303,6 +322,13 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   if (!category || category.isDeleted) {
     throw new ApiError('Category not found', 404);
   }
+
+  console.log('Found category:', {
+    id: category._id,
+    name: category.name,
+    currentImage: category.image,
+    currentImagePath: category.imagePath
+  });
   
   // Check for parent-child circular reference
   if (parentId && parentId !== 'null' && parentId !== null && parentId !== '') {
@@ -327,14 +353,14 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   // Create update object
   const updateData = {};
   
-  // Update fields if provided
-  if (name) updateData.name = name;
-  if (description !== undefined) updateData.description = description;
+  // Update fields if provided with proper type conversions
+  if (name !== undefined) updateData.name = name.trim();
+  if (description !== undefined) updateData.description = description ? description.trim() : '';
   
-  // Handle parentId
+  // Handle parentId properly
   if (parentId === 'null' || parentId === '' || parentId === null) {
     updateData.parentId = null;
-  } else if (parentId) {
+  } else if (parentId !== undefined) {
     updateData.parentId = parentId;
   }
   
@@ -343,90 +369,112 @@ exports.updateCategory = asyncHandler(async (req, res) => {
   if (showInMenu !== undefined) updateData.showInMenu = showInMenu === 'true' || showInMenu === true;
   if (showInHome !== undefined) updateData.showInHome = showInHome === 'true' || showInHome === true;
   if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
-  if (icon !== undefined) updateData.icon = icon;
-  if (metaTitle) updateData.metaTitle = metaTitle;
-  if (metaDescription !== undefined) updateData.metaDescription = metaDescription;
-  if (metaKeywords !== undefined) updateData.metaKeywords = metaKeywords;
+  if (icon !== undefined) updateData.icon = icon ? icon.trim() : null;
+  if (metaTitle !== undefined) updateData.metaTitle = metaTitle ? metaTitle.trim() : '';
+  if (metaDescription !== undefined) updateData.metaDescription = metaDescription ? metaDescription.trim() : '';
+  if (metaKeywords !== undefined) updateData.metaKeywords = metaKeywords ? metaKeywords.trim() : '';
   
   // Add other fields
   Object.assign(updateData, otherFields);
+
+  console.log('Update data prepared:', updateData);
   
   // Store old image info for cleanup
   const oldImagePath = category.imagePath || category.image;
+  let imagesToCleanup = [];
   
   // Handle image removal if specified
   if (removeImage === 'true' && oldImagePath) {
-    try {
-      console.log('Removing current image:', oldImagePath);
-      await imageService.deleteImage(oldImagePath);
-      updateData.image = null;
-      updateData.imagePath = null;
-      console.log('Current image removed successfully');
-    } catch (error) {
-      console.error(`Failed to delete image: ${error.message}`);
-      // Continue even if image deletion fails
-    }
+    console.log('Image removal requested for:', oldImagePath);
+    updateData.image = null;
+    updateData.imagePath = null;
+    imagesToCleanup.push(oldImagePath);
   }
   
   // Handle new image upload
   if (req.file) {
     try {
-      console.log('Processing new uploaded image...');
+      console.log('Processing new category image upload...');
       
-      // Validate new image
-      const validation = imageService.validateImage(req.file);
-      if (!validation.isValid) {
-        throw new ApiError(`Image validation failed: ${validation.errors.join(', ')}`, 400);
-      }
-
-      // Process new image
-      const result = await imageService.uploadImage(req.file, 'categories');
+      // Use the imageService to process the uploaded file
+      const imageResult = await imageService.uploadImage(req.file, 'categories');
       
-      updateData.image = result.url;
-      updateData.imagePath = result.path;
+      updateData.image = imageResult.url;
+      updateData.imagePath = imageResult.path;
       
-      console.log('New image processed successfully:', {
-        url: result.url,
-        path: result.path
+      console.log('New category image processed successfully:', {
+        url: imageResult.url,
+        path: imageResult.path,
+        size: imageResult.size
       });
       
-      // Delete old image if exists and we're replacing it
+      // Add old image to cleanup list if we're replacing it (and not explicitly removing)
       if (oldImagePath && removeImage !== 'true') {
-        try {
-          await imageService.deleteImage(oldImagePath);
-          console.log('Old image deleted successfully');
-        } catch (error) {
-          console.error(`Failed to delete old image: ${error.message}`);
-          // Continue even if old image deletion fails
-        }
+        imagesToCleanup.push(oldImagePath);
       }
       
     } catch (error) {
-      console.error('New image upload error:', error);
-      throw new ApiError(`Image upload failed: ${error.message}`, 500);
+      console.error('New category image upload error:', error);
+      throw new ApiError(`Image upload failed: ${error.message}`, 400);
     }
   }
   
   try {
     // Update the category
+    console.log('Updating category in database...');
     const updatedCategory = await Category.findByIdAndUpdate(
       id,
       updateData,
       { new: true, runValidators: true }
     );
     
+    // Cleanup old images after successful update
+    if (imagesToCleanup.length > 0) {
+      console.log(`Cleaning up ${imagesToCleanup.length} old images...`);
+      for (const imagePath of imagesToCleanup) {
+        try {
+          await imageService.deleteImage(imagePath);
+          console.log('Successfully cleaned up old image:', imagePath);
+        } catch (cleanupError) {
+          console.error('Failed to cleanup old image:', imagePath, cleanupError.message);
+          // Continue with other cleanups even if one fails
+        }
+      }
+    }
+    
     console.log('Category updated successfully:', {
       id: updatedCategory._id,
       name: updatedCategory.name,
-      image: updatedCategory.image
+      slug: updatedCategory.slug,
+      image: updatedCategory.image,
+      imagePath: updatedCategory.imagePath
     });
     
+    console.log('=== UPDATE CATEGORY SUCCESS ===');
     return ApiResponse.success(res, { category: updatedCategory });
+    
   } catch (error) {
-    // If update fails and we uploaded a new image, clean it up
+    console.error('Category update failed:', error);
+    
+    // Cleanup newly uploaded image if update fails
     if (req.file && updateData.imagePath) {
+      console.log('Cleaning up newly uploaded image due to update failure...');
       await imageService.deleteImage(updateData.imagePath);
     }
+    
+    // Handle mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      throw new ApiError(`Validation failed: ${validationErrors.join(', ')}`, 400);
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyValue)[0];
+      throw new ApiError(`${field} already exists`, 400);
+    }
+    
+    console.log('=== UPDATE CATEGORY FAILED ===');
     throw error;
   }
 });
@@ -439,11 +487,20 @@ exports.updateCategory = asyncHandler(async (req, res) => {
 exports.deleteCategory = asyncHandler(async (req, res) => {
   const { id } = req.params;
   
+  console.log('=== DELETE CATEGORY START ===');
+  console.log('Category ID:', id);
+  
   // Find the category
   const category = await Category.findById(id);
   if (!category) {
     throw new ApiError('Category not found', 404);
   }
+  
+  console.log('Found category for deletion:', {
+    id: category._id,
+    name: category.name,
+    hasSubcategories: category.subcategories?.length > 0
+  });
   
   // Check if this category has subcategories
   const subcategories = await Category.countDocuments({ parentId: id, isDeleted: false });
@@ -461,6 +518,9 @@ exports.deleteCategory = asyncHandler(async (req, res) => {
   category.isDeleted = true;
   await category.save();
   
+  console.log('Category soft deleted successfully');
+  console.log('=== DELETE CATEGORY SUCCESS ===');
+  
   return ApiResponse.success(res, null, 'Category deleted successfully');
 });
 
@@ -472,11 +532,20 @@ exports.deleteCategory = asyncHandler(async (req, res) => {
 exports.restoreCategory = asyncHandler(async (req, res) => {
   const { id } = req.params;
   
+  console.log('=== RESTORE CATEGORY START ===');
+  console.log('Category ID:', id);
+  
   // Find the deleted category
   const category = await Category.findOne({ _id: id, isDeleted: true });
   if (!category) {
     throw new ApiError('Deleted category not found', 404);
   }
+  
+  console.log('Found deleted category for restoration:', {
+    id: category._id,
+    name: category.name,
+    parentId: category.parentId
+  });
   
   // Check if parent is deleted
   if (category.parentId) {
@@ -489,6 +558,9 @@ exports.restoreCategory = asyncHandler(async (req, res) => {
   // Restore category
   category.isDeleted = false;
   await category.save();
+  
+  console.log('Category restored successfully');
+  console.log('=== RESTORE CATEGORY SUCCESS ===');
   
   return ApiResponse.success(res, { category }, 'Category restored successfully');
 });
@@ -602,6 +674,9 @@ exports.reorderCategories = asyncHandler(async (req, res) => {
     throw new ApiError('Categories array is required', 400);
   }
   
+  console.log('=== REORDER CATEGORIES START ===');
+  console.log('Categories to reorder:', categories.length);
+  
   // Update displayOrder for each category
   for (const item of categories) {
     if (!item.id || item.displayOrder === undefined) {
@@ -621,23 +696,36 @@ exports.reorderCategories = asyncHandler(async (req, res) => {
     .sort('displayOrder name')
     .select('name slug displayOrder');
   
+  console.log('Categories reordered successfully');
+  console.log('=== REORDER CATEGORIES SUCCESS ===');
+  
   return ApiResponse.success(res, {
     categories: updatedCategories,
     message: 'Categories reordered successfully'
   });
 });
 
-
+/**
+ * Helper function to check if a category is a descendant of another
+ * @param {String} categoryId - Category to check
+ * @param {String} possibleParentId - Possible parent category
+ * @returns {Promise<Boolean>} - True if categoryId is a descendant of possibleParentId
+ */
 async function isDescendantOf(categoryId, possibleParentId) {
-  let current = await Category.findById(categoryId);
-  
-  if (!current || !current.parentId) {
+  try {
+    let current = await Category.findById(categoryId);
+    
+    if (!current || !current.parentId) {
+      return false;
+    }
+    
+    if (current.parentId.toString() === possibleParentId) {
+      return true;
+    }
+    
+    return isDescendantOf(current.parentId, possibleParentId);
+  } catch (error) {
+    console.error('Error checking category descendant relationship:', error);
     return false;
   }
-  
-  if (current.parentId.toString() === possibleParentId) {
-    return true;
-  }
-  
-  return isDescendantOf(current.parentId, possibleParentId);
 }
