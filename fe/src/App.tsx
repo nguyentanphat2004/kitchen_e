@@ -11,12 +11,14 @@ import OrdersPage from './pages/client/order/Myorder';
 import AlwaysPanProductPage from './pages/client/Product/ProductDetail';
 import { authRoutes } from './features/auth/routes/auth-routes';
 import ProtectedRoute from './features/auth/components/protected-route';
+import AddProductPage from './pages/products/AddProductPage';
+import EditProductPage from './pages/products/EditProductPage';
 
 // Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
-const ProductList = React.lazy(() => import('./pages/products/ProductList'));
+const ProductList = React.lazy(() => import('./pages/products/ProductListPage'));
 const CategoryManagement = React.lazy(() => import('./pages/products/CategoryManagement'));
-const AddProduct = React.lazy(() => import('./pages/products/AddProduct'));
+const AddProduct = React.lazy(() => import('./pages/products/AddProductPage'));
 const ProductCustomizations = React.lazy(() => import('./pages/products/ProductCustomizations'));
 const Orders = React.lazy(() => import('./pages/orders/OrderList'));
 const CustomerList = React.lazy(() => import('./pages/customers/CustomerList'));
@@ -113,8 +115,8 @@ const AppRoutes: React.FC = () => {
           path: 'products',
           children: [
             { index: true, element: <ProductList /> },
-            { path: 'add', element: <AddProduct /> },
-            { path: ':id/edit', element: <AddProduct /> },
+            { path: 'add', element: <AddProductPage /> },
+            { path: ':id/edit', element: <EditProductPage /> },
             { path: 'categories', element: <CategoryManagement /> },
             { path: 'customizations', element: <ProductCustomizations /> }
           ]

@@ -95,7 +95,7 @@ const menuItems: MenuItem[] = [
   },
 ];
 
-const DashboardLayout: React.FC = () => {
+const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [openSubmenus, setOpenSubmenus] = useState<Record<string, boolean>>({});
   const location = useLocation();
@@ -239,7 +239,7 @@ const DashboardLayout: React.FC = () => {
         
         {/* Content */}
         <main className="flex-1 overflow-y-auto p-6 bg-gray-50">
-          <Outlet />
+          {children}
         </main>
       </div>
     </div>

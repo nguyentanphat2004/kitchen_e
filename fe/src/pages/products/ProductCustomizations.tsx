@@ -347,8 +347,8 @@ const ProductCustomizations: React.FC = () => {
                     >
                       <InputNumber
                         min={0}
-                        formatter={value => `₫ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                        parser={value => value.replace(/₫\s?|(,*)/g, '')}
+                        prefix="₫"
+                        style={{ width: '100%' }}
                       />
                     </Form.Item>
 

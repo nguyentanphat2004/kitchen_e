@@ -1,4 +1,6 @@
-// src/features/auth/services/auth-service.ts - COMPLETE FIX
+// 🚨 EMERGENCY FIX: Auth Service với User Data Corruption Fix
+// File: fe/src/features/auth/services/auth-service.ts
+
 import axios from 'axios';
 import type {
   LoginRequest,
@@ -8,12 +10,9 @@ import type {
   User,
   UpdateUserRequest,
   UpdatePasswordRequest,
-  ForgotPasswordRequest,
-  ResetPasswordRequest,
   VerificationResponse,
 } from '../interfaces/auth-interfaces';
 
-// Create axios instance with base URL and default headers
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const axiosInstance = axios.create({
@@ -21,97 +20,76 @@ const axiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000, // 30 second timeout
+  timeout: 30000,
 });
 
-// 🔧 FIXED: Enhanced request interceptor with better token handling
+// 🔧 Enhanced request interceptor with better token handling
 axiosInstance.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     
-    // Only log for non-frequent endpoints
-    if (!config.url?.includes('/me')) {
-      console.log('🔍 AuthService Request:', {
-        url: config.url,
-        method: config.method,
-        hasToken: !!token
-      });
-    }
+    // Skip frequent logging for /me
+    const isFrequentEndpoint = config.url?.includes('/me');
     
     if (token) {
       try {
-        // 🔧 Validate token format
+        // Enhanced token validation
         const parts = token.split('.');
         if (parts.length !== 3) {
-          console.error('❌ Invalid token format');
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+          if (!isFrequentEndpoint) console.error('❌ Invalid token format');
+          AuthService.clearAuthData();
           return config;
         }
         
-        // 🔧 Check expiration before sending
         const payload = JSON.parse(atob(parts[1]));
         const currentTime = Date.now() / 1000;
         
-        if (payload.exp < currentTime) {
-          console.error('❌ Token expired, removing from storage');
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+        // Add 5 minute buffer for token expiration
+        const bufferTime = 5 * 60;
+        if (payload.exp < (currentTime + bufferTime)) {
+          if (!isFrequentEndpoint) console.warn('⚠️ Token expiring soon or expired');
+          AuthService.clearAuthData();
           return config;
         }
         
-        // 🔧 Set proper Authorization header
         config.headers.Authorization = `Bearer ${token}`;
         
-        if (!config.url?.includes('/me')) {
-          console.log('✅ Authorization header set');
-        }
-        
       } catch (error) {
-        console.error('❌ Token validation error:', error);
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        if (!isFrequentEndpoint) console.error('❌ Token validation error:', error);
+        AuthService.clearAuthData();
       }
     }
     
     return config;
   },
-  (error) => {
-    console.error('❌ Request interceptor error:', error);
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// 🔧 FIXED: Enhanced response interceptor with better error handling
+// Enhanced response interceptor
 axiosInstance.interceptors.response.use(
   (response) => {
-    // Only log for non-frequent endpoints
-    if (!response.config.url?.includes('/me')) {
-      console.log('✅ AuthService Response:', {
-        status: response.status,
-        url: response.config.url
-      });
+    // 🔧 FIX: Cache successful /me responses with validation
+    if (response.config.url?.includes('/me') && response.data?.user) {
+      AuthService.setUserData(response.data.user);
     }
     return response;
   },
   (error) => {
     const { response, config } = error;
+    const isFrequentEndpoint = config?.url?.includes('/me');
     
-    // Only log for non-frequent endpoints or errors
-    if (!config?.url?.includes('/me') || response?.status !== 429) {
-      console.error('❌ AuthService Error:', {
-        status: response?.status,
-        url: config?.url,
-        message: response?.data?.message || error.message
-      });
+    // Handle rate limiting
+    if (response?.status === 429) {
+      if (!isFrequentEndpoint) {
+        console.warn('⚠️ Rate limited:', config?.url);
+      }
+      return Promise.reject(error);
     }
     
-    // 🔧 Handle 401 Unauthorized
+    // Handle 401 Unauthorized
     if (response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      AuthService.clearAuthData();
       
-      // Only redirect if not on auth pages
       const isAuthEndpoint = ['/login', '/register', '/forgot-password'].some(
         endpoint => config?.url?.includes(endpoint)
       );
@@ -124,28 +102,244 @@ axiosInstance.interceptors.response.use(
       }
     }
     
-    // 🔧 Handle 403 Forbidden
-    if (response?.status === 403) {
-      const isUnauthorizedPage = window.location.pathname.includes('/unauthorized');
-      if (!isUnauthorizedPage) {
-        window.location.href = '/unauthorized';
-      }
-    }
-    
-    // 🔧 Handle 429 Rate Limiting (don't spam logs)
-    if (response?.status === 429) {
-      if (!config?.url?.includes('/me')) {
-        console.warn('⚠️ Rate limited:', config?.url);
-      }
-    }
-    
     return Promise.reject(error);
   }
 );
 
 class AuthService {
+  // 🔧 Enhanced caching with corruption protection
+  private userCache: User | null = null;
+  private lastFetchTime: number = 0;
+  private readonly CACHE_DURATION = 2 * 60 * 1000; // 2 minutes
+  private readonly MIN_FETCH_INTERVAL = 30 * 1000; // 30 seconds
+
   /**
-   * 🔧 FIXED: Enhanced login with validation
+   * 🚨 FIXED: Safe user data storage with validation
+   */
+  static setUserData(user: User): void {
+    try {
+      if (!user || typeof user !== 'object' || !user.id || !user.email) {
+        console.error('❌ Invalid user data provided:', user);
+        return;
+      }
+      
+      // Validate required fields
+      const requiredFields = ['id', 'email', 'username', 'role'];
+      const missingFields = requiredFields.filter(field => !user[field as keyof User]);
+      
+      if (missingFields.length > 0) {
+        console.error('❌ User data missing required fields:', missingFields);
+        return;
+      }
+      
+      const userDataString = JSON.stringify(user);
+      localStorage.setItem('user', userDataString);
+      localStorage.setItem('lastUserFetch', Date.now().toString());
+      
+      console.log('✅ User data saved successfully:', {
+        id: user.id,
+        email: user.email,
+        timestamp: new Date().toLocaleTimeString()
+      });
+      
+    } catch (error) {
+      console.error('❌ Failed to save user data:', error);
+    }
+  }
+
+  /**
+   * 🚨 FIXED: Safe user data retrieval with corruption handling
+   */
+  getCachedUser(): User | null {
+    try {
+      const userData = localStorage.getItem('user');
+      
+      // Handle empty or undefined data
+      if (!userData || userData === 'undefined' || userData === 'null') {
+        console.log('⚠️ No valid user data in localStorage');
+        localStorage.removeItem('user');
+        this.userCache = null;
+        return null;
+      }
+      
+      const parsedUser = JSON.parse(userData);
+      
+      // Validate parsed user structure
+      if (!parsedUser || typeof parsedUser !== 'object') {
+        console.error('❌ Invalid user data structure');
+        localStorage.removeItem('user');
+        this.userCache = null;
+        return null;
+      }
+      
+      // Validate required fields
+      if (!parsedUser.id || !parsedUser.email || !parsedUser.username) {
+        console.error('❌ User data missing required fields:', parsedUser);
+        localStorage.removeItem('user');
+        this.userCache = null;
+        return null;
+      }
+      
+      // Update cache
+      this.userCache = parsedUser;
+      
+      console.log('✅ Valid user data retrieved:', {
+        id: parsedUser.id,
+        email: parsedUser.email,
+        cached: true
+      });
+      
+      return parsedUser;
+      
+    } catch (error) {
+      console.error('❌ Error parsing cached user:', error);
+      localStorage.removeItem('user');
+      this.userCache = null;
+      return null;
+    }
+  }
+
+  /**
+   * 🚨 FIXED: Smart getCurrentUser with intelligent caching
+   */
+  async getCurrentUser(): Promise<{ user: User }> {
+    const now = Date.now();
+    
+    // Check cache freshness
+    const lastUserFetch = localStorage.getItem('lastUserFetch');
+    const cacheAge = lastUserFetch ? now - parseInt(lastUserFetch) : Infinity;
+    
+    // Use cache if:
+    // 1. We have valid cached data
+    // 2. Cache is fresh (< 2 minutes)
+    // 3. Not hitting API too frequently (< 30 seconds)
+    const hasValidCache = this.userCache && 
+                         cacheAge < this.CACHE_DURATION && 
+                         (now - this.lastFetchTime) < this.MIN_FETCH_INTERVAL;
+                         
+    if (hasValidCache) {
+      console.log('📦 Using cached user data (age:', Math.round(cacheAge / 1000), 'seconds)');
+      return { user: this.userCache! };
+    }
+    
+    // Rate limiting check
+    if ((now - this.lastFetchTime) < this.MIN_FETCH_INTERVAL) {
+      console.log('⏰ Rate limited - trying cached data');
+      const cachedUser = this.getCachedUser();
+      if (cachedUser) {
+        return { user: cachedUser };
+      }
+    }
+    
+    // Pre-flight token validation
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    try {
+      this.lastFetchTime = now;
+      console.log('🌐 Fetching user from API...');
+      
+      const response = await axiosInstance.get<{ user: User }>('/me');
+      const userData = response.data.user;
+      
+      // Validate API response
+      if (!userData || !userData.id || !userData.email) {
+        throw new Error('Invalid user data from API');
+      }
+      
+      // Update cache and localStorage
+      this.userCache = userData;
+      AuthService.setUserData(userData);
+      
+      console.log('✅ User fetched from API successfully');
+      return response.data;
+      
+    } catch (error: any) {
+      console.error('❌ API fetch failed:', error.message);
+      
+      // On auth errors, clear everything
+      if (error.response?.status === 401) {
+        AuthService.clearAuthData();
+        throw error;
+      }
+      
+      // On other errors, try cached data as fallback
+      const cachedUser = this.getCachedUser();
+      if (cachedUser) {
+        console.log('📦 Using cached data due to API error');
+        return { user: cachedUser };
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 🚨 FIXED: Enhanced token validation
+   */
+  isAuthenticated(): boolean {
+    try {
+      const token = localStorage.getItem('token');
+      
+      if (!token || token === 'undefined' || token === 'null') {
+        AuthService.clearAuthData();
+        return false;
+      }
+      
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        AuthService.clearAuthData();
+        return false;
+      }
+      
+      const payload = JSON.parse(atob(parts[1]));
+      const currentTime = Date.now() / 1000;
+      
+      // 5 minute buffer before token expires
+      const bufferTime = 5 * 60;
+      if (payload.exp < (currentTime + bufferTime)) {
+        console.log('⚠️ Token expired or expiring soon');
+        AuthService.clearAuthData();
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Token validation error:', error);
+      AuthService.clearAuthData();
+      return false;
+    }
+  }
+
+  /**
+   * 🚨 FIXED: Safe auth data clearing
+   */
+  static clearAuthData(): void {
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('lastUserFetch');
+      console.log('✅ Auth data cleared');
+    } catch (error) {
+      console.error('❌ Error clearing auth data:', error);
+    }
+  }
+
+  /**
+   * 🚨 FIXED: Force refresh user data
+   */
+  async refreshUser(): Promise<{ user: User }> {
+    this.userCache = null;
+    this.lastFetchTime = 0;
+    localStorage.removeItem('lastUserFetch');
+    console.log('🔄 Force refreshing user data...');
+    return this.getCurrentUser();
+  }
+
+  /**
+   * Enhanced login with better data handling
    */
   async login(loginData: LoginRequest): Promise<LoginResponse> {
     try {
@@ -157,7 +351,7 @@ class AuthService {
         throw new Error('No token received from server');
       }
       
-      // 🔧 Validate token before storing
+      // Validate token before storing
       try {
         const payload = JSON.parse(atob(response.data.token.split('.')[1]));
         const currentTime = Date.now() / 1000;
@@ -167,9 +361,9 @@ class AuthService {
         }
         
         localStorage.setItem('token', response.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.user));
+        AuthService.setUserData(response.data.user);
         
-        console.log('✅ Login successful, token stored');
+        console.log('✅ Login successful');
         
       } catch (tokenError) {
         console.error('❌ Token validation failed:', tokenError);
@@ -189,84 +383,12 @@ class AuthService {
   }
 
   /**
-   * 🔧 FIXED: Enhanced getCurrentUser with better error handling
-   */
-  async getCurrentUser(): Promise<{ user: User }> {
-    try {
-      // 🔧 Pre-flight validation
-      const token = localStorage.getItem('token');
-      if (!token) {
-        throw new Error('No authentication token');
-      }
-      
-      // Validate token format and expiration
-      const parts = token.split('.');
-      if (parts.length !== 3) {
-        throw new Error('Invalid token format');
-      }
-      
-      const payload = JSON.parse(atob(parts[1]));
-      if (payload.exp * 1000 < Date.now()) {
-        throw new Error('Token expired');
-      }
-      
-      const response = await axiosInstance.get<{ user: User }>('/me');
-      
-      // Update cached user data
-      localStorage.setItem('user', JSON.stringify(response.data.user));
-      
-      return response.data;
-    } catch (error: any) {
-      // Clear auth data on specific errors
-      if (error.response?.status === 401 || error.message.includes('expired') || error.message.includes('Invalid')) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      }
-      
-      throw error;
-    }
-  }
-
-  /**
-   * 🔧 FIXED: Enhanced register
-   */
-  async register(registerData: RegisterRequest): Promise<RegisterResponse> {
-    try {
-      console.log('🚀 Starting registration');
-      
-      const response = await axiosInstance.post<RegisterResponse>('/register', registerData);
-      
-      if (response.data.token) {
-        try {
-          const payload = JSON.parse(atob(response.data.token.split('.')[1]));
-          localStorage.setItem('token', response.data.token);
-          localStorage.setItem('user', JSON.stringify(response.data.user));
-          console.log('✅ Registration successful');
-        } catch (tokenError) {
-          console.warn('⚠️ Invalid token during registration');
-        }
-      }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ Registration failed:', error);
-      
-      if (error.response?.status === 429) {
-        throw new Error('Too many registration attempts. Please try again later.');
-      }
-      
-      throw error;
-    }
-  }
-
-  /**
-   * 🔧 FIXED: Enhanced logout
+   * Enhanced logout
    */
   async logout(): Promise<void> {
     try {
       console.log('🚀 Starting logout');
       
-      // Try server logout if token exists
       const token = localStorage.getItem('token');
       if (token) {
         await axiosInstance.get('/logout');
@@ -275,68 +397,14 @@ class AuthService {
     } catch (error) {
       console.warn('⚠️ Server logout failed, continuing with local logout');
     } finally {
-      // Always clear local storage
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      AuthService.clearAuthData();
+      this.userCache = null;
+      this.lastFetchTime = 0;
       console.log('✅ Logout completed');
     }
   }
 
-  /**
-   * 🔧 FIXED: Enhanced token validation
-   */
-  isAuthenticated(): boolean {
-    try {
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        return false;
-      }
-      
-      // Validate format
-      const parts = token.split('.');
-      if (parts.length !== 3) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        return false;
-      }
-      
-      // Check expiration
-      const payload = JSON.parse(atob(parts[1]));
-      const currentTime = Date.now() / 1000;
-      
-      if (payload.exp < currentTime) {
-        localStorage.removeItem('token');
-        localStorage.removeUser('user');
-        return false;
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('❌ Token validation error:', error);
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      return false;
-    }
-  }
-
-  /**
-   * 🔧 FIXED: Safe cached user retrieval
-   */
-  getCachedUser(): User | null {
-    try {
-      const userData = localStorage.getItem('user');
-      return userData ? JSON.parse(userData) : null;
-    } catch (error) {
-      console.error('❌ Error parsing cached user:', error);
-      localStorage.removeItem('user');
-      return null;
-    }
-  }
-
-  /**
-   * 🔧 FIXED: Token expiration utilities
-   */
+  // Token utility methods
   getTokenExpirationTime(): number | null {
     try {
       const token = this.getToken();
@@ -356,11 +424,20 @@ class AuthService {
     return Math.max(0, expirationTime - Date.now());
   }
 
-  // 🔧 Profile and password updates with enhanced error handling
+  getToken(): string | null {
+    const token = localStorage.getItem('token');
+    return (token && token !== 'undefined' && token !== 'null') ? token : null;
+  }
+
+  // Profile updates with enhanced error handling
   async updateUserProfile(userData: UpdateUserRequest): Promise<{ user: User }> {
     try {
       const response = await axiosInstance.put<{ user: User }>('/me', userData);
-      localStorage.setItem('user', JSON.stringify(response.data.user));
+      
+      // Update cache with new data
+      this.userCache = response.data.user;
+      AuthService.setUserData(response.data.user);
+      
       return response.data;
     } catch (error) {
       console.error('❌ Profile update failed:', error);
@@ -374,12 +451,44 @@ class AuthService {
       
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.user));
+        AuthService.setUserData(response.data.user);
+        
+        // Reset cache
+        this.userCache = response.data.user;
       }
       
       return response.data;
     } catch (error) {
       console.error('❌ Password update failed:', error);
+      throw error;
+    }
+  }
+
+  // Other methods remain the same...
+  async register(registerData: RegisterRequest): Promise<RegisterResponse> {
+    try {
+      console.log('🚀 Starting registration');
+      
+      const response = await axiosInstance.post<RegisterResponse>('/register', registerData);
+      
+      if (response.data.token) {
+        try {
+          localStorage.setItem('token', response.data.token);
+          AuthService.setUserData(response.data.user);
+          console.log('✅ Registration successful');
+        } catch (tokenError) {
+          console.warn('⚠️ Error storing registration data');
+        }
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Registration failed:', error);
+      
+      if (error.response?.status === 429) {
+        throw new Error('Too many registration attempts. Please try again later.');
+      }
+      
       throw error;
     }
   }
@@ -406,35 +515,40 @@ class AuthService {
     const response = await axiosInstance.post<VerificationResponse>('/resend-verification');
     return response.data;
   }
-
-  getToken(): string | null {
-    return localStorage.getItem('token');
-  }
-
-  /**
-   * 🔧 NEW: Debug helper methods
-   */
-  async testConnection(): Promise<any> {
-    try {
-      const response = await axiosInstance.get('/debug/health');
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  async validateCurrentToken(): Promise<any> {
-    try {
-      const token = this.getToken();
-      if (!token) throw new Error('No token to validate');
-      
-      const response = await axiosInstance.post('/debug/validate', { token });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
 }
 
-// Export as singleton
+// Export singleton
 export default new AuthService();
+
+// 🚨 IMMEDIATE FIX SCRIPT - Add this to console to fix corrupted data
+if (typeof window !== 'undefined') {
+  (window as any).fixAuthData = () => {
+    console.log('🔧 Fixing corrupted auth data...');
+    
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    
+    // Fix undefined/null user data
+    if (!user || user === 'undefined' || user === 'null') {
+      console.log('❌ Found corrupted user data, removing...');
+      localStorage.removeItem('user');
+    }
+    
+    // Fix undefined/null token
+    if (!token || token === 'undefined' || token === 'null') {
+      console.log('❌ Found corrupted token, removing...');
+      localStorage.removeItem('token');
+    }
+    
+    // Clean up
+    if (!localStorage.getItem('lastUserFetch')) {
+      localStorage.removeItem('lastUserFetch');
+    }
+    
+    console.log('✅ Auth data cleanup completed');
+    console.log('🔄 Refreshing page...');
+    window.location.reload();
+  };
+  
+  console.log('🛠️ Emergency fix available: run fixAuthData() in console');
+}
