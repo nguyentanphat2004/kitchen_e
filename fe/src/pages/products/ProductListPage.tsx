@@ -20,6 +20,9 @@ const ProductListPage: React.FC = () => {
   // Fetch products (categories will be fetched by ProductFiltersComponent)
   const { data: productsData, isLoading } = useProducts(filters);
 
+  // Log productsData to inspect its content
+  console.log('productsData in ProductListPage:', productsData);
+
   // Mutations
   const deleteProductMutation = useDeleteProduct();
   const restoreProductMutation = useRestoreProduct();
@@ -100,7 +103,7 @@ const ProductListPage: React.FC = () => {
 
       <Card>
         <ProductList
-          products={productsData?.products || []}
+          products={productsData?.data?.products || []}
           loading={isLoading}
           pagination={{
             current: productsData?.pagination?.currentPage || 1,
@@ -113,7 +116,7 @@ const ProductListPage: React.FC = () => {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onRestore={(id) => {
-            const product = productsData?.products.find((p: Product) => p._id === id);
+            const product = productsData?.data?.products.find((p: Product) => p._id === id);
             if (product) handleRestore(product);
           }}
           onView={handleView}

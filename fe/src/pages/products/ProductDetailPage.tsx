@@ -4,9 +4,11 @@ import { Card, Button, Tabs, Modal, Space, Tag, Image, Typography, Descriptions 
 import { ArrowLeftOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { useProduct } from '../../hooks/useProducts';
 import { useProductVariants, useCreateVariant, useUpdateVariant, useDeleteVariant } from '../../hooks/useVariants';
+import { useProductCustomizations } from '../../hooks/useCustomizations'; 
 import LoadingState from '../../components/shared/LoadingState';
 import VariantList from '../../components/variants/VariantList';
 import VariantForm from '../../components/variants/VariantForm';
+import CustomizationList from '../../components/customizations/CustomizationList';
 import { formatCurrency, formatDateTime } from '../../utils/format';
 import { urlUtils } from '../../config/api.config';
 import type { ProductVariant, VariantFormData } from '../../services/variantService';
@@ -20,19 +22,24 @@ const ProductDetailPage: React.FC = () => {
   const [isVariantModalVisible, setIsVariantModalVisible] = useState(false);
   const [editingVariant, setEditingVariant] = useState<ProductVariant | null>(null);
 
-  // Fetch product
+
   const { data: productData, isLoading: isLoadingProduct } = useProduct(id!);
   
-  // Fetch variants
+ 
   const { data: variantsData, isLoading: isLoadingVariants } = useProductVariants(id!);
+  
 
-  // Mutations
+  const { data: customizationsData, isLoading: isLoadingCustomizations } = useProductCustomizations(id!);
+
+  console.log('Product ID:', id);
+  console.log('Product Data:', productData);
   const createVariantMutation = useCreateVariant();
   const updateVariantMutation = useUpdateVariant();
   const deleteVariantMutation = useDeleteVariant();
 
-  const product = productData?.product;
+  const product = productData?.data.product;
 
+  // Variant handlers
   const handleVariantModalOpen = (variant?: ProductVariant) => {
     setEditingVariant(variant || null);
     setIsVariantModalVisible(true);
@@ -67,6 +74,11 @@ const ProductDetailPage: React.FC = () => {
     deleteVariantMutation.mutate({ productId: id!, variantId });
   };
 
+  // Navigate to customizations page
+  const handleManageCustomizations = () => {
+    navigate(`/products/${id}/customizations`);
+  };
+
   if (isLoadingProduct) {
     return <LoadingState message="Loading product..." />;
   }
@@ -82,7 +94,9 @@ const ProductDetailPage: React.FC = () => {
     );
   }
 
-  const imageUrl = urlUtils.getFullImageUrl(product.images?.[0]?.url ?? '') ?? urlUtils.getFallbackImageUrl() ?? '';
+  const imageUrl = product.images?.[0]?.url 
+    ? urlUtils.getFullImageUrl(product.images[0].url)
+    : urlUtils.getFallbackImageUrl();
 
   return (
     <div className="p-6">
@@ -103,7 +117,6 @@ const ProductDetailPage: React.FC = () => {
           </Button>
         </Space>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <Card className="lg:col-span-1">
           <div className="text-center">
@@ -178,7 +191,31 @@ const ProductDetailPage: React.FC = () => {
               basePrice={product.basePrice}
             />
           </TabPane>
-
+          <TabPane tab="Customizations" key="customizations">
+            <div className="flex justify-between items-center mb-4">
+              <Title level={4}>Product Customizations</Title>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleManageCustomizations}
+              >
+                Manage Customizations
+              </Button>
+            </div>
+            
+            <CustomizationList
+              customizations={customizationsData || []}
+              loading={isLoadingCustomizations}
+              showActions={false} // Read-only view in product detail
+            />
+            
+            {(!customizationsData || customizationsData.length === 0) && (
+              <div className="text-center py-8 text-gray-500">
+                <p>No customizations configured for this product.</p>
+                <p className="text-sm">Click "Manage Customizations" to add customization options.</p>
+              </div>
+            )}
+          </TabPane>
           <TabPane tab="Images" key="images">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {product.images?.map((image: { url: string; altText?: string; isDefault?: boolean }, index: number) => (

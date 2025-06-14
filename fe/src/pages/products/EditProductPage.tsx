@@ -43,7 +43,7 @@ const EditProductPage: React.FC = () => {
     return <LoadingState message="Loading product..." />;
   }
 
-  if (!productData?.product) {
+  if (!productData?.data.product) {
     return (
       <div className="p-6">
         <div className="text-center">
@@ -69,7 +69,6 @@ const EditProductPage: React.FC = () => {
       <Card>
         <ProductForm
           product={productData.product}
-          categories={categoriesData?.categories || []}
           onSubmit={handleSubmit}
           onCancel={handleCancel}
           isLoading={updateProductMutation.isLoading}
