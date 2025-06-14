@@ -1,4 +1,4 @@
-// middlewares/upload.middleware.js
+// middlewares/upload.middleware.js - FIXED PATH HANDLING
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -22,8 +22,10 @@ if (storageType === 's3') {
   });
 }
 
-// Helper function to determine upload directory based on field name
+// 🔧 FIX 1: Enhanced upload directory mapping
 const getUploadDirectory = (fieldname) => {
+  console.log('🔍 getUploadDirectory called with fieldname:', fieldname);
+  
   const dirMap = {
     'avatar': 'avatars',
     'image': 'categories', // Single image field for categories
@@ -35,14 +37,18 @@ const getUploadDirectory = (fieldname) => {
   };
 
   // Check if fieldname contains specific keywords
-  if (fieldname.includes('product')) return 'products';
-  if (fieldname.includes('variant')) return 'variants';
-  if (fieldname.includes('category')) return 'categories';
-  if (fieldname.includes('review')) return 'reviews';
-  if (fieldname.includes('banner')) return 'banners';
-  if (fieldname.includes('customization') || fieldname.includes('option')) return 'customizations';
+  if (fieldname && typeof fieldname === 'string') {
+    if (fieldname.includes('product')) return 'products';
+    if (fieldname.includes('variant')) return 'variants';
+    if (fieldname.includes('category')) return 'categories';
+    if (fieldname.includes('review')) return 'reviews';
+    if (fieldname.includes('banner')) return 'banners';
+    if (fieldname.includes('customization') || fieldname.includes('option')) return 'customizations';
+  }
 
-  return dirMap[fieldname] || 'others';
+  const result = dirMap[fieldname] || 'others';
+  console.log('✅ Upload directory determined:', result);
+  return result;
 };
 
 // Configure multer storage based on storage type
@@ -76,21 +82,33 @@ if (storageType === 's3') {
     contentType: multerS3.AUTO_CONTENT_TYPE
   });
 } else {
-  // Local storage configuration
+  // 🔧 FIX 2: Enhanced local storage configuration
   storage = multer.diskStorage({
     destination: function(req, file, cb) {
       try {
         const uploadDir = getUploadDirectory(file.fieldname);
-        const fullPath = path.join(__dirname, '..', 'uploads', uploadDir);
+        
+        // 🔧 Create absolute path properly
+        const uploadsRoot = path.join(__dirname, '..', 'uploads');
+        const fullPath = path.join(uploadsRoot, uploadDir);
+        
+        console.log('🔍 Upload destination paths:', {
+          fieldname: file.fieldname,
+          uploadDir: uploadDir,
+          uploadsRoot: uploadsRoot,
+          fullPath: fullPath
+        });
         
         // Create directory if it doesn't exist
-        fs.mkdirSync(fullPath, { recursive: true });
+        if (!fs.existsSync(fullPath)) {
+          fs.mkdirSync(fullPath, { recursive: true });
+          console.log('✅ Created directory:', fullPath);
+        }
         
-        const relativePath = `uploads/${uploadDir}`;
-        console.log(`Local Upload - Field: ${file.fieldname}, Dir: ${relativePath}`);
-        cb(null, relativePath);
+        // 🔧 FIX: Return absolute path, not relative
+        cb(null, fullPath);
       } catch (error) {
-        console.error('Local destination error:', error);
+        console.error('❌ Local destination error:', error);
         cb(error);
       }
     },
@@ -100,17 +118,22 @@ if (storageType === 's3') {
         const fileExt = path.extname(file.originalname).toLowerCase();
         const filename = `${Date.now()}-${randomName}${fileExt}`;
         
-        console.log(`Local Upload - Original: ${file.originalname}, New: ${filename}`);
+        console.log('✅ Generated filename:', {
+          original: file.originalname,
+          generated: filename,
+          extension: fileExt
+        });
+        
         cb(null, filename);
       } catch (error) {
-        console.error('Local filename generation error:', error);
+        console.error('❌ Filename generation error:', error);
         cb(error);
       }
     }
   });
 }
 
-// File filter function
+// File filter function with enhanced validation
 const fileFilter = (req, file, cb) => {
   try {
     const allowedMimeTypes = [
@@ -122,15 +145,21 @@ const fileFilter = (req, file, cb) => {
       'image/svg+xml'
     ];
     
-    console.log(`File filter - Name: ${file.originalname}, Type: ${file.mimetype}`);
+    console.log('🔍 File filter check:', {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype
+    });
     
     if (allowedMimeTypes.includes(file.mimetype)) {
+      console.log('✅ File type approved:', file.mimetype);
       cb(null, true);
     } else {
+      console.log('❌ File type rejected:', file.mimetype);
       cb(new ApiError(`Unsupported file type: ${file.mimetype}. Allowed types: ${allowedMimeTypes.join(', ')}`, 400), false);
     }
   } catch (error) {
-    console.error('File filter error:', error);
+    console.error('❌ File filter error:', error);
     cb(error, false);
   }
 };
@@ -148,12 +177,14 @@ const upload = multer({
   limits
 });
 
-// Enhanced upload middleware wrapper
+// 🔧 FIX 3: Enhanced upload middleware wrapper with better error handling
 const handleUpload = (fileOptions) => {
   return (req, res, next) => {
     let uploadMiddleware;
     
     try {
+      console.log('🔍 Setting up upload middleware for:', fileOptions);
+      
       if (typeof fileOptions === 'string') {
         // Single file upload
         uploadMiddleware = upload.single(fileOptions);
@@ -169,7 +200,7 @@ const handleUpload = (fileOptions) => {
       
       uploadMiddleware(req, res, (err) => {
         if (err) {
-          console.error('Upload middleware error:', err);
+          console.error('❌ Upload middleware error:', err);
           
           // Handle specific multer errors
           if (err.code === 'LIMIT_FILE_SIZE') {
@@ -181,56 +212,116 @@ const handleUpload = (fileOptions) => {
           if (err.code === 'LIMIT_UNEXPECTED_FILE') {
             return next(new ApiError('Unexpected file field', 400));
           }
-          if (err.code === 'LIMIT_FIELD_KEY') {
-            return next(new ApiError('Field name too long', 400));
-          }
-          if (err.code === 'LIMIT_FIELD_VALUE') {
-            return next(new ApiError('Field value too long', 400));
-          }
-          if (err.code === 'LIMIT_FIELD_COUNT') {
-            return next(new ApiError('Too many fields', 400));
-          }
           
           return next(err);
         }
         
-        // Log successful upload
+        // 🔧 Log successful upload with proper paths
         if (req.file) {
-          console.log('Single file uploaded:', {
+          console.log('✅ Single file uploaded:', {
             fieldname: req.file.fieldname,
             originalname: req.file.originalname,
             size: req.file.size,
-            path: req.file.path || req.file.key
+            destination: req.file.destination,
+            filename: req.file.filename,
+            path: req.file.path,
+            key: req.file.key,
+            location: req.file.location
           });
         }
         
         if (req.files) {
           if (Array.isArray(req.files)) {
-            console.log(`${req.files.length} files uploaded as array`);
+            console.log(`✅ ${req.files.length} files uploaded as array`);
           } else {
             const fileCount = Object.values(req.files).flat().length;
-            console.log(`${fileCount} files uploaded as fields`);
+            console.log(`✅ ${fileCount} files uploaded as fields`);
           }
         }
         
         next();
       });
     } catch (error) {
-      console.error('Upload handler setup error:', error);
+      console.error('❌ Upload handler setup error:', error);
       next(new ApiError('Upload configuration error', 500));
     }
   };
 };
 
-// Enhanced file deletion function
+// 🔧 FIX 4: Enhanced file URL generation with proper path handling
+const getFileUrl = (filePath) => {
+  try {
+    if (!filePath) {
+      console.log('⚠️ No file path provided for URL generation');
+      return null;
+    }
+    
+    console.log('🔍 Generating URL for path:', filePath);
+    
+    // If already a complete URL, return as is
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      console.log('✅ Already complete URL:', filePath);
+      return filePath;
+    }
+    
+    if (storageType === 's3') {
+      // Generate S3 URL
+      const bucket = process.env.AWS_BUCKET;
+      const region = process.env.AWS_REGION;
+      
+      // Clean the file path (remove any leading slashes)
+      const cleanPath = filePath.replace(/^\/+/, '');
+      const url = `https://${bucket}.s3.${region}.amazonaws.com/${cleanPath}`;
+      
+      console.log('✅ Generated S3 URL:', url);
+      return url;
+    } else {
+      // 🔧 FIX: Generate local URL properly
+      const baseUrl = process.env.API_URL || 'http://localhost:5000';
+      
+      // Extract relative path from absolute path if needed
+      let relativePath = filePath;
+      
+      // If it's an absolute path, extract the relative part
+      if (path.isAbsolute(filePath)) {
+        const uploadsRoot = path.join(__dirname, '..', 'uploads');
+        if (filePath.startsWith(uploadsRoot)) {
+          // Get relative path from uploads directory
+          relativePath = path.relative(uploadsRoot, filePath).replace(/\\/g, '/');
+          relativePath = `uploads/${relativePath}`;
+        }
+      } else {
+        // If relative, ensure it starts with uploads/
+        if (!relativePath.startsWith('uploads/')) {
+          relativePath = `uploads/${relativePath}`;
+        }
+      }
+      
+      const url = `${baseUrl}/${relativePath}`;
+      
+      console.log('✅ Generated local URL:', {
+        input: filePath,
+        relativePath: relativePath,
+        url: url
+      });
+      
+      return url;
+    }
+  } catch (error) {
+    console.error('❌ Error generating URL for file:', filePath, error);
+    return null;
+  }
+};
+
+// 🔧 FIX 5: Enhanced file deletion with proper path handling
 const deleteFile = async (filePath) => {
   if (!filePath) {
-    console.log('No file path provided for deletion');
+    console.log('⚠️ No file path provided for deletion');
     return false;
   }
   
   try {
-    console.log(`Attempting to delete file: ${filePath}`);
+    console.log('🔍 Attempting to delete file:', filePath);
     
     if (storageType === 's3') {
       const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -247,74 +338,41 @@ const deleteFile = async (filePath) => {
         Key: key
       };
       
-      console.log(`Deleting S3 object with key: ${key}`);
       await s3.send(new DeleteObjectCommand(deleteParams));
-      console.log(`Successfully deleted S3 object: ${key}`);
+      console.log('✅ Successfully deleted S3 object:', key);
     } else {
-      // Local file deletion
-      let absolutePath;
+      // Local file deletion with proper path handling
+      let absolutePath = filePath;
       
-      if (path.isAbsolute(filePath)) {
-        absolutePath = filePath;
-      } else {
-        absolutePath = path.join(__dirname, '..', filePath);
+      // If it's not absolute, make it absolute
+      if (!path.isAbsolute(filePath)) {
+        // Handle both relative paths like "uploads/categories/file.jpg" 
+        // and paths like "categories/file.jpg"
+        if (filePath.startsWith('uploads/')) {
+          absolutePath = path.join(__dirname, '..', filePath);
+        } else {
+          absolutePath = path.join(__dirname, '..', 'uploads', filePath);
+        }
       }
+      
+      console.log('🔍 Delete file paths:', {
+        input: filePath,
+        absolute: absolutePath
+      });
       
       // Check if file exists before deletion
       if (fs.existsSync(absolutePath)) {
         fs.unlinkSync(absolutePath);
-        console.log(`Successfully deleted local file: ${absolutePath}`);
+        console.log('✅ Successfully deleted local file:', absolutePath);
       } else {
-        console.log(`Local file not found: ${absolutePath}`);
+        console.log('⚠️ Local file not found (might already be deleted):', absolutePath);
       }
     }
     
     return true;
   } catch (error) {
-    console.error(`Failed to delete file ${filePath}:`, error);
+    console.error('❌ Failed to delete file:', filePath, error);
     return false;
-  }
-};
-
-// Enhanced URL generation function
-const getFileUrl = (filePath) => {
-  if (!filePath) {
-    console.log('No file path provided for URL generation');
-    return null;
-  }
-  
-  try {
-    // If already a complete URL, return as is
-    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-      return filePath;
-    }
-    
-    if (storageType === 's3') {
-      // Generate S3 URL
-      const bucket = process.env.AWS_BUCKET;
-      const region = process.env.AWS_REGION;
-      
-      // Clean the file path (remove any leading slashes)
-      const cleanPath = filePath.replace(/^\/+/, '');
-      
-      return `https://${bucket}.s3.${region}.amazonaws.com/${cleanPath}`;
-    } else {
-      // Generate local URL
-      const baseUrl = process.env.API_URL || 'http://localhost:5000';
-      
-      // Clean the file path
-      let cleanPath = filePath.replace(/^\/+/, '');
-      
-      // Ensure the path starts with uploads/ for local files
-      if (!cleanPath.startsWith('uploads/')) {
-        cleanPath = `uploads/${cleanPath}`;
-      }
-      
-      return `${baseUrl}/${cleanPath}`;
-    }
-  } catch (error) {
-    console.error(`Error generating URL for file ${filePath}:`, error);
-    return null;
   }
 };
 

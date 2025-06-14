@@ -1,4 +1,4 @@
-// src/features/auth/contexts/AuthContext.tsx - FIXED VERSION
+// src/features/auth/contexts/AuthContext.tsx - REDUCED API CALLS
 import React, { createContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type  { 
@@ -30,7 +30,7 @@ type AuthAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'SET_LOADING' }
   | { type: 'TOKEN_EXPIRED' }
-  | { type: 'NETWORK_ERROR' }; // 🔧 NEW: Handle network errors
+  | { type: 'NETWORK_ERROR' };
 
 // Create context
 interface AuthContextProps {
@@ -46,7 +46,7 @@ interface AuthContextProps {
   resendVerification: () => Promise<{ success: boolean; message: string }>;
   clearError: () => void;
   refreshUser: () => Promise<void>;
-  loadUser: () => Promise<void>; // 🔧 NEW: Expose loadUser
+  loadUser: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextProps | undefined>(undefined);
@@ -79,7 +79,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         loading: false,
         error: action.payload
       };
-    case 'NETWORK_ERROR': // 🔧 NEW: Handle network errors differently
+    case 'NETWORK_ERROR':
       return {
         ...state,
         loading: false,
@@ -125,28 +125,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [state, dispatch] = useReducer(authReducer, initialState);
   const navigate = useNavigate();
   
-  // 🔧 FIX 1: Better ref management
+  // 🔧 FIX 1: Better ref management with reduced API calls
   const tokenCheckInterval = useRef<NodeJS.Timeout | null>(null);
   const loadUserAttempts = useRef(0);
   const isComponentMounted = useRef(true);
   const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
+  const lastLoadUserTime = useRef<number>(0);
+  const lastTokenCheck = useRef<number>(0);
   
   const maxRetryAttempts = 3;
-  const retryDelays = [1000, 3000, 5000]; // Progressive delays
+  const retryDelays = [2000, 5000, 10000]; // Progressive delays
+  const MIN_LOAD_USER_INTERVAL = 30000; // 🔧 Minimum 30 seconds between loadUser calls
+  const MIN_TOKEN_CHECK_INTERVAL = 300000; // 🔧 Check token every 5 minutes instead of 1 minute
 
-  // 🔧 FIX 2: Cleanup function
+  // Cleanup function
   const cleanup = useCallback(() => {
     if (tokenCheckInterval.current) {
       clearInterval(tokenCheckInterval.current);
       tokenCheckInterval.current = null;
     }
     
-    // Clear all retry timeouts
     retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
     retryTimeouts.current.clear();
   }, []);
 
-  // 🔧 FIX 3: Component cleanup on unmount
+  // Component cleanup on unmount
   useEffect(() => {
     isComponentMounted.current = true;
     
@@ -156,13 +159,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [cleanup]);
 
-  // 🔧 FIX 4: Improved loadUser with exponential backoff
+  // 🔧 FIX 2: Rate-limited loadUser with better caching
   const loadUser = useCallback(async (isRetry = false, forceRefresh = false) => {
-    // Don't proceed if component is unmounted
     if (!isComponentMounted.current) return;
 
+    // 🔧 Rate limiting: don't call too frequently
+    const now = Date.now();
+    if (!forceRefresh && !isRetry && (now - lastLoadUserTime.current) < MIN_LOAD_USER_INTERVAL) {
+      console.log('⏰ LoadUser skipped - too frequent calls');
+      return;
+    }
+
     try {
-      // ✅ Check if token exists and is valid first
+      // Check if token exists and is valid first
       if (!authService.isAuthenticated()) {
         if (isComponentMounted.current) {
           dispatch({ type: 'AUTH_ERROR', payload: 'No valid authentication token' });
@@ -170,46 +179,69 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
 
-      // ✅ Try to get cached user first for better UX (if not forcing refresh)
+      // 🔧 Try to get cached user first for better UX
       if (!forceRefresh && !isRetry) {
         const cachedUser = authService.getCachedUser();
         if (cachedUser && isComponentMounted.current) {
           dispatch({ type: 'USER_LOADED', payload: cachedUser });
           
-          // ✅ Verify with server in background
-          setTimeout(() => {
-            if (isComponentMounted.current) {
-              loadUser(true, true);
-            }
-          }, 1000);
+          // 🔧 Only verify with server occasionally, not every time
+          const shouldVerify = Math.random() < 0.1; // 10% chance
+          if (shouldVerify) {
+            setTimeout(() => {
+              if (isComponentMounted.current) {
+                loadUser(true, true);
+              }
+            }, 5000); // Delayed verification
+          }
           return;
         }
       }
 
-      // ✅ Fetch user from server
+      // Update last call time
+      lastLoadUserTime.current = now;
+
+      // Fetch user from server
+      console.log('🔄 Fetching user from server...');
       const { user } = await authService.getCurrentUser();
       
       if (isComponentMounted.current) {
         dispatch({ type: 'USER_LOADED', payload: user });
-        loadUserAttempts.current = 0; // Reset retry counter
+        loadUserAttempts.current = 0;
+        console.log('✅ User loaded successfully');
       }
       
     } catch (error: any) {
       if (!isComponentMounted.current) return;
 
       loadUserAttempts.current++;
+      console.error('❌ LoadUser error:', error);
       
-      console.error('LoadUser error:', error);
-      
-      // ✅ Different handling based on error type
+      // Different handling based on error type
       if (error.response?.status === 401) {
         dispatch({ type: 'TOKEN_EXPIRED' });
+      } else if (error.response?.status === 429) {
+        // 🔧 Handle rate limiting specifically
+        console.warn('⚠️ Rate limited by server, backing off...');
+        if (loadUserAttempts.current >= maxRetryAttempts) {
+          dispatch({ type: 'NETWORK_ERROR', payload: 'Server busy. Please try again later.' });
+        } else {
+          // Longer delay for rate limiting
+          const delay = 60000; // 1 minute delay for rate limiting
+          const timeout = setTimeout(() => {
+            if (isComponentMounted.current) {
+              retryTimeouts.current.delete(timeout);
+              loadUser(true, forceRefresh);
+            }
+          }, delay);
+          retryTimeouts.current.add(timeout);
+        }
       } else if (error.code === 'NETWORK_ERROR' || !error.response) {
         if (loadUserAttempts.current >= maxRetryAttempts) {
           dispatch({ type: 'NETWORK_ERROR', payload: 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.' });
         } else {
-          // ✅ Exponential backoff retry
-          const delay = retryDelays[loadUserAttempts.current - 1] || 5000;
+          // Exponential backoff retry
+          const delay = retryDelays[loadUserAttempts.current - 1] || 10000;
           const timeout = setTimeout(() => {
             if (isComponentMounted.current) {
               retryTimeouts.current.delete(timeout);
@@ -221,8 +253,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } else if (loadUserAttempts.current >= maxRetryAttempts) {
         dispatch({ type: 'AUTH_ERROR', payload: 'Không thể tải thông tin người dùng. Vui lòng đăng nhập lại.' });
       } else {
-        // ✅ Retry with exponential backoff
-        const delay = retryDelays[loadUserAttempts.current - 1] || 5000;
+        // Retry with exponential backoff
+        const delay = retryDelays[loadUserAttempts.current - 1] || 10000;
         const timeout = setTimeout(() => {
           if (isComponentMounted.current) {
             retryTimeouts.current.delete(timeout);
@@ -234,7 +266,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
-  // 🔧 FIX 5: Improved token expiration monitoring
+  // 🔧 FIX 3: Less frequent token expiration monitoring
   const startTokenMonitoring = useCallback(() => {
     // Clear existing interval
     if (tokenCheckInterval.current) {
@@ -245,6 +277,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Only start monitoring if user is authenticated
     if (!state.isAuthenticated) return;
 
+    console.log('🔄 Starting token monitoring...');
+
     tokenCheckInterval.current = setInterval(() => {
       if (!isComponentMounted.current) {
         if (tokenCheckInterval.current) {
@@ -254,16 +288,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
 
+      const now = Date.now();
+      
+      // 🔧 Rate limit token checks
+      if ((now - lastTokenCheck.current) < MIN_TOKEN_CHECK_INTERVAL) {
+        return;
+      }
+      
+      lastTokenCheck.current = now;
+
       const timeUntilExpiration = authService.getTimeUntilExpiration();
       
-      // ✅ Token sắp hết hạn trong 5 phút
-      if (timeUntilExpiration > 0 && timeUntilExpiration < 5 * 60 * 1000) {
-        console.warn('Token sẽ hết hạn trong 5 phút');
+      // Token sẽ hết hạn trong 10 phút (increased from 5 minutes)
+      if (timeUntilExpiration > 0 && timeUntilExpiration < 10 * 60 * 1000) {
+        console.warn('⚠️ Token sẽ hết hạn trong 10 phút');
         // TODO: Implement token refresh here
       }
       
-      // ✅ Token đã hết hạn
+      // Token đã hết hạn
       if (timeUntilExpiration <= 0) {
+        console.warn('⚠️ Token expired');
         if (isComponentMounted.current && state.isAuthenticated) {
           dispatch({ type: 'TOKEN_EXPIRED' });
         }
@@ -273,10 +317,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           tokenCheckInterval.current = null;
         }
       }
-    }, 60000); // Check every minute
+    }, MIN_TOKEN_CHECK_INTERVAL); // 🔧 Check every 5 minutes instead of 1 minute
   }, [state.isAuthenticated]);
 
-  // 🔧 FIX 6: Start monitoring when authentication state changes
+  // Start monitoring when authentication state changes
   useEffect(() => {
     if (state.isAuthenticated) {
       startTokenMonitoring();
@@ -288,28 +332,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [state.isAuthenticated, startTokenMonitoring]);
 
-  // Load user on first load
+  // 🔧 FIX 4: Load user only once on mount
   useEffect(() => {
+    // Only load user once on mount
     loadUser();
-  }, [loadUser]);
+  }, []); // Empty dependency array
 
-  // 🔧 FIX 7: Improved login with better error handling
+  // 🔧 FIX 5: Improved login with better error handling
   const login = async (loginData: LoginRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
       const data = await authService.login(loginData);
       
+      console.log('Login response:', data);
+      console.log('Token:', data.token);
+      
       if (isComponentMounted.current) {
         dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
         
-        // ✅ Start token monitoring after successful login
+        // Start token monitoring after successful login
         setTimeout(() => {
           if (isComponentMounted.current) {
             startTokenMonitoring();
           }
-        }, 100);
+        }, 1000);
         
-        // ✅ Better navigation handling
+        // Better navigation handling
         const urlParams = new URLSearchParams(window.location.search);
         const redirectTo = urlParams.get('redirect') || '/shop';
         navigate(redirectTo);
@@ -319,7 +367,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       let errorMessage = 'Đăng nhập thất bại. Vui lòng thử lại.';
       
-      // ✅ Better error message handling
+      // Better error message handling
       if (error.code === 'NETWORK_ERROR' || !error.response) {
         errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
       } else if (error.response?.status === 401) {
@@ -334,7 +382,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 8: Improved register
+  // Improved register
   const register = async (registerData: RegisterRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
@@ -343,12 +391,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (isComponentMounted.current) {
         dispatch({ type: 'REGISTER_SUCCESS', payload: data.user });
         
-        // ✅ Start token monitoring after successful registration
+        // Start token monitoring after successful registration
         setTimeout(() => {
           if (isComponentMounted.current) {
             startTokenMonitoring();
           }
-        }, 100);
+        }, 1000);
         
         navigate('/shop');
       }
@@ -357,7 +405,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       let errorMessage = 'Đăng ký thất bại. Vui lòng thử lại.';
       
-      // ✅ Better error message handling
       if (error.code === 'NETWORK_ERROR' || !error.response) {
         errorMessage = 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng.';
       } else if (error.response?.status === 400) {
@@ -370,10 +417,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 9: Improved logout with cleanup
+  // Improved logout with cleanup
   const logout = async () => {
     try {
-      // ✅ Stop token monitoring first
+      // Stop token monitoring first
       cleanup();
       
       await authService.logout();
@@ -384,7 +431,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     } catch (error) {
       console.error('Logout error:', error);
-      // ✅ Still log out on client side even if server request fails
+      // Still log out on client side even if server request fails
       if (isComponentMounted.current) {
         dispatch({ type: 'LOGOUT' });
         navigate('/auth');
@@ -392,7 +439,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 10: Better error handling for updateUser
+  // Better error handling for updateUser
   const updateUser = async (userData: UpdateUserRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
@@ -420,7 +467,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 11: Better error handling for updatePassword
+  // Better error handling for updatePassword
   const updatePassword = async (passwordData: UpdatePasswordRequest) => {
     try {
       dispatch({ type: 'SET_LOADING' });
@@ -429,12 +476,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (isComponentMounted.current) {
         dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
         
-        // ✅ Restart token monitoring with new token
+        // Restart token monitoring with new token
         setTimeout(() => {
           if (isComponentMounted.current) {
             startTokenMonitoring();
           }
-        }, 100);
+        }, 1000);
       }
     } catch (error: any) {
       if (!isComponentMounted.current) return;
@@ -454,12 +501,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // 🔧 FIX 12: Manual user refresh
+  // 🔧 Manual user refresh with rate limiting
   const refreshUser = async () => {
+    const now = Date.now();
+    if ((now - lastLoadUserTime.current) < 5000) { // 5 second rate limit for manual refresh
+      console.log('⏰ Manual refresh skipped - too frequent');
+      return;
+    }
     await loadUser(true, true);
   };
 
-  // Existing methods with improved error handling
+  // Existing methods with improved error handling remain the same...
   const forgotPassword = async (email: string) => {
     try {
       const response = await authService.forgotPassword(email);

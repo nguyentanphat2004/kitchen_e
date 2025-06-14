@@ -24,6 +24,38 @@ const authRateLimit = rateLimit({
   }
 });
 
+// 🔧 NEW: Rate limiting for /me endpoint (more lenient)
+const meRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute
+  message: {
+    success: false,
+    error: {
+      message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.',
+      statusCode: 429
+    }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true
+});
+
+// 🔧 NEW: General rate limiting for other endpoints
+const generalRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per 15 minutes
+  message: {
+    success: false,
+    error: {
+      message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.',
+      statusCode: 429
+    }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true
+});
+
 /**
  * 🔧 FIX 2: Improved protect middleware với detailed logging
  */
@@ -289,9 +321,87 @@ function shouldCheckSuspiciousActivity(req, user) {
 
 // 🔧 Export rate limiting
 exports.authRateLimit = authRateLimit;
+exports.meRateLimit = meRateLimit;
+exports.generalRateLimit = generalRateLimit;
 
 // 🔧 NEW: Create combined middleware for common auth patterns
 exports.protectWithRateLimit = [authRateLimit, exports.protect];
 exports.adminOnly = [exports.protect, exports.authorize('admin')];
 exports.staffOrAdmin = [exports.protect, exports.authorize('staff', 'admin')];
 exports.verifiedUsersOnly = [exports.protect, exports.requireEmailVerification];
+
+// 🔧 NEW: Debug middleware functions
+exports.debugJWT = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'No token provided'
+      });
+    }
+    
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    res.json({
+      success: true,
+      message: 'Token is valid',
+      decoded: decoded,
+      expiresAt: new Date(decoded.exp * 1000),
+      isExpired: decoded.exp * 1000 < Date.now(),
+      timeUntilExpiry: Math.max(0, decoded.exp * 1000 - Date.now())
+    });
+  } catch (error) {
+    res.status(401).json({
+      success: false,
+      error: 'Token validation failed',
+      reason: error.message
+    });
+  }
+};
+
+exports.testAuth = (req, res) => {
+  res.json({
+    success: true,
+    message: 'Authentication successful',
+    user: {
+      id: req.user._id,
+      email: req.user.email,
+      role: req.user.role,
+      isEmailVerified: req.user.isEmailVerified
+    },
+    auth: {
+      token: req.headers.authorization?.split(' ')[1],
+      timestamp: new Date().toISOString()
+    }
+  });
+};
+
+exports.debugAuth = (req, res) => {
+  res.json({
+    success: true,
+    message: 'Auth debug info',
+    request: {
+      headers: {
+        authorization: req.headers.authorization ? 'Bearer [REDACTED]' : undefined,
+        'user-agent': req.headers['user-agent']
+      },
+      ip: req.ip,
+      method: req.method,
+      path: req.path,
+      query: req.query,
+      body: req.body
+    },
+    auth: {
+      isAuthenticated: !!req.user,
+      user: req.user ? {
+        id: req.user._id,
+        email: req.user.email,
+        role: req.user.role
+      } : null
+    },
+    timestamp: new Date().toISOString()
+  });
+};
