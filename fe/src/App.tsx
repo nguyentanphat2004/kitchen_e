@@ -15,6 +15,7 @@ import AddProductPage from './pages/products/AddProductPage';
 import EditProductPage from './pages/products/EditProductPage';
 import ProductDetailPage from './pages/products/ProductDetailPage';
 import ProductListPage from './pages/products/ProductListPage';
+import ProductCustomizationsPage from './pages/products/ProductCustomizationsPage';
 
 // Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
@@ -117,10 +118,9 @@ const AppRoutes: React.FC = () => {
             { index: true, element: <ProductListPage /> },
             { path: 'add', element: <AddProductPage /> },
             { path: ':id', element: < ProductDetailPage   /> },
-            { path: ':id/customizations', element: <ProductCustomizations  /> },
             { path: ':id/edit', element: <EditProductPage /> },
             { path: 'categories', element: <CategoryManagement /> },
-            { path: 'customizations', element: <ProductCustomizations /> }
+            { path: ':id/customizations', element: <ProductCustomizationsPage /> }
           ]
         },
         

@@ -35,7 +35,7 @@ interface CustomizationOption {
   name: string;
   value: string;
   priceAdjustment: number;
-  image?: string;
+  image?: string | File; // Allow File type for new uploads
   isDefault: boolean;
 }
 
@@ -51,7 +51,7 @@ interface Customization {
 }
 
 const ProductCustomizations: React.FC = () => {
-  const { productId } = useParams<{ productId: string }>();
+  const { id } = useParams<{ id: string }>();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingCustomization, setEditingCustomization] = useState<Customization | null>(null);
   const [form] = Form.useForm();
@@ -59,44 +59,53 @@ const ProductCustomizations: React.FC = () => {
 
   // Fetch customizations
   const { data: customizations, isLoading } = useQuery({
-    queryKey: ['product-customizations', productId],
+    queryKey: ['product-customizations', id],
     queryFn: async () => {
-      const response = await api.get(`/products/${productId}/customizations`);
+      if (!id) {
+        throw new Error('Product ID is required');
+      }
+      const response = await api.get(`/products/${id}/customizations`);
       return response.data.customizations;
-    }
+    },
+    enabled: !!id
   });
 
   // Create/Update customization mutation
   const mutation = useMutation({
     mutationFn: async (values: any) => {
+      if (!id) {
+        throw new Error('Product ID is required');
+      }
       const formData = new FormData();
       
       // Add basic fields
       Object.keys(values).forEach(key => {
-        if (key !== 'options' && key !== 'images') {
+        if (key !== 'options') { // Exclude options from direct append, handle them separately
           formData.append(key, values[key]);
         }
       });
 
-      // Add options as JSON string
-      formData.append('options', JSON.stringify(values.options));
+      // Add options as JSON string and handle images
+      const optionsWithoutImages = values.options.map((option: CustomizationOption) => {
+        const { image, ...rest } = option;
+        return rest;
+      });
+      formData.append('options', JSON.stringify(optionsWithoutImages));
 
-      // Add option images
-      if (values.images) {
-        values.images.forEach((file: any) => {
-          if (file.originFileObj) {
-            formData.append('images', file.originFileObj);
-          }
-        });
-      }
+      // Add option images with correct field name
+      values.options.forEach((option: CustomizationOption) => {
+        if (option.image instanceof File) {
+          formData.append('optionImages', option.image); // Use 'optionImages' for all files
+        }
+      });
 
       if (editingCustomization) {
-        return api.put(`/products/${productId}/customizations/${editingCustomization._id}`, formData);
+        return api.put(`/products/${id}/customizations/${editingCustomization._id}`, formData);
       }
-      return api.post(`/products/${productId}/customizations`, formData);
+      return api.post(`/products/${id}/customizations`, formData);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['product-customizations', productId] });
+      queryClient.invalidateQueries({ queryKey: ['product-customizations', id] });
       toast.success(`Customization ${editingCustomization ? 'updated' : 'created'} successfully`);
       handleModalClose();
     },
@@ -107,11 +116,14 @@ const ProductCustomizations: React.FC = () => {
 
   // Delete customization mutation
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await api.delete(`/products/${productId}/customizations/${id}`);
+    mutationFn: async (customizationId: string) => {
+      if (!id) {
+        throw new Error('Product ID is required');
+      }
+      await api.delete(`/products/${id}/customizations/${customizationId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['product-customizations', productId] });
+      queryClient.invalidateQueries({ queryKey: ['product-customizations', id] });
       toast.success('Customization deleted successfully');
     },
     onError: (error: any) => {
@@ -213,6 +225,10 @@ const ProductCustomizations: React.FC = () => {
       ),
     },
   ];
+
+  if (!id) {
+    return <div>Product ID is required</div>;
+  }
 
   return (
     <div className="p-6">
@@ -365,11 +381,15 @@ const ProductCustomizations: React.FC = () => {
                       {...field}
                       name={[field.name, 'image']}
                       label="Image"
+                      // Ant Design Upload component passes file as an array of objects
+                      valuePropName="fileList"
+                      getValueFromEvent={(e) => e?.fileList}
                     >
                       <Upload
                         listType="picture"
                         maxCount={1}
-                        beforeUpload={() => false}
+                        beforeUpload={() => false} // Prevent auto upload
+                        accept="image/*"
                       >
                         <Button icon={<UploadOutlined />}>Upload Image</Button>
                       </Upload>
@@ -379,7 +399,7 @@ const ProductCustomizations: React.FC = () => {
 
                 <Button
                   type="dashed"
-                  onClick={() => add()}
+                  onClick={() => add()} // Add an empty option initially
                   block
                   icon={<PlusOutlined />}
                 >

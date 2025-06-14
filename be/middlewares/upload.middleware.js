@@ -387,7 +387,7 @@ const uploadSingle = (fieldName) => handleUpload(fieldName);
 const uploadAvatar = handleUpload('avatar');
 const uploadProductImages = handleUpload({ name: 'images', maxCount: 10 });
 const uploadVariantImages = handleUpload({ name: 'images', maxCount: 5 });
-const uploadCustomizationImages = handleUpload({ name: 'optionImages', maxCount: 10 });
+const uploadCustomizationImages = handleUpload({ name: 'optionImages', maxCount: 50 });
 const uploadReviewImages = handleUpload({ name: 'images', maxCount: 5 });
 const uploadCategoryImage = handleUpload('image');
 const uploadBannerImage = handleUpload('image');
