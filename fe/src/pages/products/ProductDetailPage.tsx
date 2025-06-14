@@ -33,11 +33,15 @@ const ProductDetailPage: React.FC = () => {
 
   console.log('Product ID:', id);
   console.log('Product Data:', productData);
+  console.log('Variants Data:', variantsData?.data?.variants);
+  console.log('Customizations Data:', customizationsData);
+
   const createVariantMutation = useCreateVariant();
   const updateVariantMutation = useUpdateVariant();
   const deleteVariantMutation = useDeleteVariant();
 
   const product = productData?.data.product;
+  const variants = variantsData?.data?.variants || [];
 
   // Variant handlers
   const handleVariantModalOpen = (variant?: ProductVariant) => {
@@ -184,7 +188,7 @@ const ProductDetailPage: React.FC = () => {
             </div>
             
             <VariantList
-              variants={variantsData?.variants || []}
+              variants={variants}
               loading={isLoadingVariants}
               onEdit={handleVariantModalOpen}
               onDelete={handleVariantDelete}

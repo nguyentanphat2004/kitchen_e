@@ -402,5 +402,4 @@ const ProductCustomizations: React.FC = () => {
     </div>
   );
 };
-
-export default ProductCustomizations; 
+export default ProductCustomizations;
