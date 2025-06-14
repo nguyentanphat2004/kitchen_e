@@ -35,7 +35,6 @@ router.post('/reset-password/:token', authRateLimit, authController.resetPasswor
 router.get('/verify-email/:token', generalRateLimit, authController.verifyEmail);
 router.post('/resend-verification', generalRateLimit, protect, authController.resendVerification);
 
-// No rate limiting for OAuth (handled by external providers)
 router.get(
   '/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })

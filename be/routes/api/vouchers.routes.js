@@ -34,9 +34,8 @@ router.delete('/:id', protect, authorize('admin'), deleteVoucher);
 router.post('/:id/assign', protect, authorize('admin'), assignVoucherToUser);
 router.post('/:id/assign-bulk', protect, authorize('admin'), assignVoucherToMultipleUsers);
 
-// User vouchers route (can be accessed by admin or the user)
 router.get('/users/:userId/vouchers', protect, (req, res, next) => {
-  // Allow if user is admin or is the user whose vouchers are being accessed
+
   if (req.user.role === 'admin' || req.user.id === req.params.userId) {
     next();
   } else {

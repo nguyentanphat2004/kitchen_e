@@ -36,6 +36,15 @@ const ProductCustomizationsPage: React.FC = () => {
   // Fetch customizations
   const { data: customizations, isLoading, error, refetch } = useProductCustomizations(id);
 
+  // Add detailed logging for customizations
+  console.log('🔍 ProductCustomizationsPage: Customizations Data:', {
+    customizations,
+    rawData: JSON.stringify(customizations, null, 2)
+  });
+
+  // Get the actual customizations array from the nested response
+  const customizationsList = customizations?.data?.data?.customizations || [];
+
   // Mutations
   const createCustomizationMutation = useCreateCustomization();
   const updateCustomizationMutation = useUpdateCustomization();
@@ -186,7 +195,7 @@ const ProductCustomizationsPage: React.FC = () => {
       {/* Main Content */}
       <Card>
         <CustomizationList
-          customizations={customizations || []}
+          customizations={customizationsList}
           loading={isLoading}
           onEdit={handleModalOpen}
           onDelete={handleDelete}

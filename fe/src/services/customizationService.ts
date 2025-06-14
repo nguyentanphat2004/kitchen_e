@@ -6,7 +6,7 @@ export const customizationService = {
   async getProductCustomizations(productId: string) {
     try {
       const response = await api.get(`/products/${productId}/customizations`);
-      return response.data?.customizations || [];
+      return response.data?.data?.customizations  || [];
     } catch (error: any) {
       console.error('Failed to fetch customizations:', error);
       throw new Error(error.response?.data?.message || 'Failed to fetch customizations');
@@ -52,11 +52,11 @@ export const customizationService = {
       
       formData.append('options', JSON.stringify(optionsData));
 
-      // Add option images with indices
+      // 🔧 FIX: Change field name from 'images' to 'optionImages' to match backend expectation
       const optionIndices: string[] = [];
       data.options.forEach((option, index) => {
         if (option.image) {
-          formData.append('images', option.image);
+          formData.append('optionImages', option.image); // Changed from 'images' to 'optionImages'
           optionIndices.push(index.toString());
         }
       });
@@ -65,6 +65,11 @@ export const customizationService = {
         optionIndices.forEach(index => {
           formData.append('optionIndices', index);
         });
+      }
+
+      console.log('🔍 FormData contents for create:');
+      for (let pair of formData.entries()) {
+        console.log(pair[0], pair[1]);
       }
 
       const response = await api.post(`/products/${productId}/customizations`, formData, {
@@ -106,11 +111,11 @@ export const customizationService = {
       
       formData.append('options', JSON.stringify(optionsData));
 
-      // Add new option images
+      // 🔧 FIX: Change field name from 'images' to 'optionImages' to match backend expectation
       const optionIndices: string[] = [];
       data.options.forEach((option, index) => {
         if (option.image) {
-          formData.append('images', option.image);
+          formData.append('optionImages', option.image); // Changed from 'images' to 'optionImages'
           optionIndices.push(index.toString());
         }
       });
@@ -124,6 +129,11 @@ export const customizationService = {
       // Add removed images
       if (data.removeOptionImages && data.removeOptionImages.length > 0) {
         formData.append('removeOptionImages', JSON.stringify(data.removeOptionImages));
+      }
+
+      console.log('🔍 FormData contents for update:');
+      for (let pair of formData.entries()) {
+        console.log(pair[0], pair[1]);
       }
 
       const response = await api.put(`/products/${productId}/customizations/${customizationId}`, formData, {
