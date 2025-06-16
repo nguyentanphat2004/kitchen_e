@@ -247,7 +247,7 @@ app.use('/api/cart', require('./routes/api/carts.routes'));
 app.use('/api/orders', require('./routes/api/orders.routes'));
 app.use('/api/payments', require('./routes/api/payments.routes'));
 app.use('/api/wishlist', require('./routes/api/wishlist.routes'));
-// app.use('/api/users', require('./routes/api/users.routes'));
+app.use('/api/users', require('./routes/api/users.routes'));
 app.use('/api/flash-sales', require('./routes/api/flash-sales.routes'));
 app.use('/api/reviews', require('./routes/api/reviews.routes'));
 app.use('/api/vouchers', require('./routes/api/vouchers.routes'));

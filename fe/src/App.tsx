@@ -16,13 +16,14 @@ import EditProductPage from './pages/products/EditProductPage';
 import ProductDetailPage from './pages/products/ProductDetailPage';
 import ProductListPage from './pages/products/ProductListPage';
 import ProductCustomizationsPage from './pages/products/ProductCustomizationsPage';
+import UserList from './pages/users/UserList';
 
 // Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
 const CategoryManagement = React.lazy(() => import('./pages/products/CategoryManagement'));
 const ProductCustomizations = React.lazy(() => import('./pages/products/ProductCustomizations'));
 const Orders = React.lazy(() => import('./pages/orders/OrderList'));
-const CustomerList = React.lazy(() => import('./pages/customers/CustomerList'));
+const CustomerList = React.lazy(() => import('./pages/users/UserList'));
 const AddFlashSale = React.lazy(() => import('./pages/marketing/AddFlashSale'));
 const FlashSaleList = React.lazy(() => import('./pages/marketing/FlashSaleList'));
 const Vouchers = React.lazy(() => import('./pages/marketing/Vouchers'));
@@ -141,8 +142,8 @@ const AppRoutes: React.FC = () => {
         {
           path: 'customers',
           children: [
-            { index: true, element: <CustomerList /> },
-            { path: ':id', element: <div>Customer Details</div> }
+            { index: true, element: <UserList /> },
+            // { path: ':id', element: <div>Customer Details</div> }
           ]
         },
         

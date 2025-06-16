@@ -22,10 +22,10 @@ router.put('/:id/addresses/:addressId', protect, authorizeOwnerOrAdmin(), userCo
 router.delete('/:id/addresses/:addressId', protect, authorizeOwnerOrAdmin(), userController.deleteUserAddress);
 router.put('/:id/addresses/:addressId/default', protect, authorizeOwnerOrAdmin(), userController.setDefaultAddress);
 
-// Order summary for user
+
 router.get('/:id/orders-summary', protect, authorizeOwnerOrAdmin(), userController.getUserOrdersSummary);
 
-// Admin-only routes
+
 router.get('/', protect, authorize('admin'), userController.getUsers);
 router.delete('/:id', protect, authorize('admin'), userController.deleteUser);
 router.put('/:id/restore', protect, authorize('admin'), userController.restoreUser);
