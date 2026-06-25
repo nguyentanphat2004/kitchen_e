@@ -6,15 +6,16 @@ import {
   ChevronLeft, ChevronRight, Mail, Phone, Trash2, RotateCcw,
   Shield, UserCheck, Calendar, Globe
 } from 'lucide-react';
-import { useUsers } from '../../features/users/hooks/useUsers';
+
 import { 
   UserStatusBadge, 
   UserRoleBadge, 
   UserAvatar,
   UserFiltersComponent,
   RoleChangeModal 
-} from '../../components/users';
-import type { User } from '../../types/user-interfaces';
+} from '../components/dashboard';
+import type { User } from '../../../types/user';
+import { useUsers } from '../hooks/useUsers';
 
 const UserList: React.FC = () => {
   const {
@@ -33,13 +34,11 @@ const UserList: React.FC = () => {
     handleSelectAll,
     clearFilters,
     clearSelection,
-    updateUser,
     changeUserRole,
     deleteUser,
     restoreUser,
     bulkDelete,
     exportUsers,
-    isUpdating,
     isChangingRole,
     isDeleting,
     isRestoring,
@@ -360,7 +359,7 @@ const UserList: React.FC = () => {
                 </td>
                 
                 <td className="px-3 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{formatDate(user.createdAt)}</div>
+                  <div className="text-sm text-gray-900">{formatDate(user.createdAt ?? new Date())}</div>
                 </td>
                 
                 <td className="px-3 py-4 whitespace-nowrap">

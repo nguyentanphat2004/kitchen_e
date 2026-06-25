@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Upload, Button, Image, message, Modal } from 'antd';
 import { PlusOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import type { UploadFile, UploadProps } from 'antd';
-import { urlUtils } from '../../config/api.config';
+import { urlUtils } from '../../config/api_cli.config';
 
 interface ImageUploadProps {
   value?: UploadFile[];

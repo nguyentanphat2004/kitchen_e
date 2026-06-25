@@ -11,17 +11,17 @@ import OrdersPage from './pages/client/order/Myorder';
 import AlwaysPanProductPage from './pages/client/Product/ProductDetail';
 import { authRoutes } from './features/auth/routes/auth-routes';
 import ProtectedRoute from './features/auth/components/protected-route';
-import AddProductPage from './pages/products/AddProductPage';
-import EditProductPage from './pages/products/EditProductPage';
+import AddProductPage from './features/products/pages/dashboard/AddProductPage';
+import EditProductPage from './features/products/pages/dashboard/EditProductPage';
 import ProductDetailPage from './pages/products/ProductDetailPage';
 import ProductListPage from './pages/products/ProductListPage';
-import ProductCustomizationsPage from './pages/products/ProductCustomizationsPage';
+import ProductCustomizationsPage from './features/products/pages/dashboard/ProductCustomizationsPage';
 import UserList from './pages/users/UserList';
 
 // Lazy load all admin pages
 const Dashboard = React.lazy(() => import('./pages/dashboard/dashboard-overview'));
 const CategoryManagement = React.lazy(() => import('./pages/products/CategoryManagement'));
-const ProductCustomizations = React.lazy(() => import('./pages/products/ProductCustomizations'));
+const ProductCustomizations = React.lazy(() => import('./features/products/components/ProductCustomizations/ProductCustomizations'));
 const Orders = React.lazy(() => import('./pages/orders/OrderList'));
 const CustomerList = React.lazy(() => import('./pages/users/UserList'));
 const AddFlashSale = React.lazy(() => import('./pages/marketing/AddFlashSale'));
